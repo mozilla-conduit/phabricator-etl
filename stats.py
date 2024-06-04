@@ -63,19 +63,15 @@ for revision in revisions:
     # diffs
     for diff in session_diff.query(Diff).filter_by(revisionID=revision.id):
         diff_id = f"diff-{diff.id}"
-        output[revision.title][diff_id] = {}
-        output[revision.title][diff_id][
-            "submission time (dateCreated)"
-        ] = diff.dateCreated
+        current_diff = output[revision.title][diff_id] = {}
+        current_diff["submission time (dateCreated)"] = diff.dateCreated
         user = session_users.query(User).filter_by(phid=diff.authorPHID).one()
-        output[revision.title][diff_id]["author (userName)"] = user.userName
-        output[revision.title][diff_id]["group (isMailingList)"] = bool(
-            user.isMailingList
-        )
+        current_diff["author (userName)"] = user.userName
+        current_diff["group (isMailingList)"] = bool(user.isMailingList)
         # changesets
         for changeset in session_diff.query(Changeset).filter_by(diffID=diff.id):
             changeset_id = f"changeset-{changeset.id}"
-            output[revision.title][diff_id][changeset_id] = {
+            current_diff[changeset_id] = {
                 "addLines": changeset.addLines,
                 "delLines": changeset.delLines,
             }
@@ -87,9 +83,18 @@ for revision in revisions:
                 user = (
                     session_users.query(User).filter_by(phid=comment.authorPHID).one()
                 )
-                output[revision.title][diff_id][changeset_id][comment_id] = {
+                current_diff[changeset_id][comment_id] = {
                     "author": user.userName,
                     "timestamp (dateCreated)": comment.dateCreated,
                     "content": comment.content,
                 }
+                att = json.loads(comment.attributes)
+                is_suggestion = False
+                if "inline.state.initial" in att:
+                    hassuggestion = att["inline.state.initial"].get("hassuggestion")
+                    if hassuggestion == "true":
+                        is_suggestion = True
+                        break
+                current_diff[changeset_id][comment_id]["is_suggestion"] = is_suggestion
+
 Path("revisions.json").write_text(json.dumps(output, indent=2))
