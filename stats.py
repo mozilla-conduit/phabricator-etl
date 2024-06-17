@@ -61,9 +61,10 @@ for revision in revisions:
     )
     output[revision.title]["target repository"] = repository.first().uri
     # diffs
+    output[revision.title]["diffs"] = {}
     for diff in session_diff.query(Diff).filter_by(revisionID=revision.id):
         diff_id = f"diff-{diff.id}"
-        current_diff = output[revision.title][diff_id] = {}
+        current_diff = output[revision.title]["diffs"][diff_id] = {}
         current_diff["submission time (dateCreated)"] = diff.dateCreated
         user = session_users.query(User).filter_by(phid=diff.authorPHID).one()
         current_diff["author (userName)"] = user.userName
