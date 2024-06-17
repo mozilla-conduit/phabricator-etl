@@ -54,7 +54,7 @@ for revision in revisions:
     output[revision.title][
         "last review id (lastReviewerPHID)"
     ] = revision.lastReviewerPHID
-    output[revision.title]["current status (status)"] = revision.status
+    output[revision.title]["current status"] = revision.status
     output[revision.title]["stack size (bug-id)"] = revision.id
     repository = session_repo.query(Repo).filter_by(
         repositoryPHID=revision.repositoryPHID
@@ -73,8 +73,8 @@ for revision in revisions:
         for changeset in session_diff.query(Changeset).filter_by(diffID=diff.id):
             changeset_id = f"changeset-{changeset.id}"
             current_diff[changeset_id] = {
-                "addLines": changeset.addLines,
-                "delLines": changeset.delLines,
+                "lines added": changeset.addLines,
+                "lines removed": changeset.delLines,
             }
             # comments
             for comment in session_diff.query(TransactionComment).filter_by(
