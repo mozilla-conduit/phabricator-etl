@@ -88,6 +88,7 @@ for revision in revisions:
                     "author": user.userName,
                     "timestamp (dateCreated)": comment.dateCreated,
                     "content": comment.content,
+                    "character count": len(comment.content),
                 }
                 att = json.loads(comment.attributes)
                 is_suggestion = False
@@ -113,5 +114,6 @@ for revision in revisions:
                 "author": user.userName,
                 "timestamp (dateCreated)": comment.dateCreated,
                 "content": comment.content,
+                "character count": len(comment.content),
             }
 Path("revisions.json").write_text(json.dumps(output, indent=2))
