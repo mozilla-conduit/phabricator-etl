@@ -70,14 +70,15 @@ for revision in revisions:
         current_diff["author (userName)"] = user.userName
         current_diff["group (isMailingList)"] = bool(user.isMailingList)
         # changesets
+        current_diff["changesets"] = {}
         for changeset in session_diff.query(Changeset).filter_by(diffID=diff.id):
             changeset_id = f"changeset-{changeset.id}"
-            current_diff[changeset_id] = {
+            current_diff["changesets"][changeset_id] = {
                 "lines added": changeset.addLines,
                 "lines removed": changeset.delLines,
             }
             # comments
-            current_diff[changeset_id]["comments"] = {}
+            current_diff["changesets"][changeset_id]["comments"] = {}
             for comment in session_diff.query(TransactionComment).filter_by(
                 changesetID=changeset.id
             ):
@@ -85,7 +86,7 @@ for revision in revisions:
                 user = (
                     session_users.query(User).filter_by(phid=comment.authorPHID).one()
                 )
-                current_diff[changeset_id]["comments"][comment_id] = {
+                current_diff["changesets"][changeset_id]["comments"][comment_id] = {
                     "author": user.userName,
                     "timestamp (dateCreated)": comment.dateCreated,
                     "content": comment.content,
@@ -98,7 +99,7 @@ for revision in revisions:
                     if hassuggestion == "true":
                         is_suggestion = True
                         break
-                current_diff[changeset_id]["comments"][comment_id][
+                current_diff["changesets"][changeset_id]["comments"][comment_id][
                     "is_suggestion"
                 ] = is_suggestion
     # comments
