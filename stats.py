@@ -77,6 +77,7 @@ for revision in revisions:
                 "lines removed": changeset.delLines,
             }
             # comments
+            current_diff[changeset_id]["comments"] = {}
             for comment in session_diff.query(TransactionComment).filter_by(
                 changesetID=changeset.id
             ):
@@ -84,7 +85,7 @@ for revision in revisions:
                 user = (
                     session_users.query(User).filter_by(phid=comment.authorPHID).one()
                 )
-                current_diff[changeset_id][comment_id] = {
+                current_diff[changeset_id]["comments"][comment_id] = {
                     "author": user.userName,
                     "timestamp (dateCreated)": comment.dateCreated,
                     "content": comment.content,
@@ -97,7 +98,9 @@ for revision in revisions:
                     if hassuggestion == "true":
                         is_suggestion = True
                         break
-                current_diff[changeset_id][comment_id]["is_suggestion"] = is_suggestion
+                current_diff[changeset_id]["comments"][comment_id][
+                    "is_suggestion"
+                ] = is_suggestion
     # comments
     output[revision.title]["comments"] = {}
     for transaction in session_diff.query(Transaction).filter_by(
