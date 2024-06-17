@@ -96,5 +96,21 @@ for revision in revisions:
                         is_suggestion = True
                         break
                 current_diff[changeset_id][comment_id]["is_suggestion"] = is_suggestion
-
+    # comments
+    output[revision.title]["comments"] = {}
+    for transaction in session_diff.query(Transaction).filter_by(
+        objectPHID=revision.phid
+    ):
+        if transaction.transactionType == "core:comment":
+            comment = (
+                session_diff.query(TransactionComment)
+                .filter_by(phid=transaction.commentPHID)
+                .one()
+            )
+            comment_id = f"comment-{comment.id}"
+            output[revision.title]["comments"][comment_id] = {
+                "author": user.userName,
+                "timestamp (dateCreated)": comment.dateCreated,
+                "content": comment.content,
+            }
 Path("revisions.json").write_text(json.dumps(output, indent=2))
