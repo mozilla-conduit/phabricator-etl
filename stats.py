@@ -42,6 +42,7 @@ Diff = Base.classes.differential_diff
 Changeset = Base.classes.differential_changeset
 Transaction = Base.classes.differential_transaction
 TransactionComment = Base.classes.differential_transaction_comment
+Reviewer = Base.classes.differential_reviewer
 
 # Results
 output = {}
@@ -68,7 +69,6 @@ for revision in revisions:
         current_diff["submission time (dateCreated)"] = diff.dateCreated
         user = session_users.query(User).filter_by(phid=diff.authorPHID).one()
         current_diff["author (userName)"] = user.userName
-        current_diff["group (isMailingList)"] = bool(user.isMailingList)
         # changesets
         current_diff["changesets"] = {}
         for changeset in session_diff.query(Changeset).filter_by(diffID=diff.id):
@@ -102,6 +102,22 @@ for revision in revisions:
                 current_diff["changesets"][changeset_id]["comments"][comment_id][
                     "is_suggestion"
                 ] = is_suggestion
+        # reviews
+        current_diff["review requests"] = {}
+        for review in session_diff.query(Reviewer).filter_by(
+            revisionPHID=revision.phid
+        ):
+            reviewer = (
+                session_users.query(User).filter_by(phid=review.reviewerPHID).one()
+            )
+            current_diff["review requests"][f"review-{review.id}"] = {
+                "reviewer": reviewer.userName,
+                "group (isMailingList)": bool(reviewer.isMailingList),
+                "creation timestamp": review.dateCreated,
+                "review timestamp": review.dateModified,
+                "status": review.reviewerStatus,
+            }
+
     # comments
     output[revision.title]["comments"] = {}
     for transaction in session_diff.query(Transaction).filter_by(
