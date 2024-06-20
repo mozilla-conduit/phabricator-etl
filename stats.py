@@ -53,24 +53,21 @@ Reviewer = Base.classes.differential_reviewer
 output = {}
 revisions = session_diff.query(Revision)
 for revision in revisions:
-    output[revision.title] = {}
-    output[revision.title][
-        "first submission timestamp (dateCreated)"
-    ] = revision.dateCreated
-    output[revision.title][
-        "last review id (lastReviewerPHID)"
-    ] = revision.lastReviewerPHID
-    output[revision.title]["current status"] = revision.status
-    output[revision.title]["stack size (bug-id)"] = revision.id
+    rev_key = f"{revision.title} ({revision.id})"
+    output[rev_key] = {}
+    output[rev_key]["first submission timestamp (dateCreated)"] = revision.dateCreated
+    output[rev_key]["last review id (lastReviewerPHID)"] = revision.lastReviewerPHID
+    output[rev_key]["current status"] = revision.status
+    output[rev_key]["stack size (bug-id)"] = revision.id
     repository = session_repo.query(Repo).filter_by(
         repositoryPHID=revision.repositoryPHID
     )
-    output[revision.title]["target repository"] = repository.first().uri
+    output[rev_key]["target repository"] = repository.first().uri
     # diffs
-    output[revision.title]["diffs"] = {}
+    output[rev_key]["diffs"] = {}
     for diff in session_diff.query(Diff).filter_by(revisionID=revision.id):
         diff_id = f"diff-{diff.id}"
-        current_diff = output[revision.title]["diffs"][diff_id] = {}
+        current_diff = output[rev_key]["diffs"][diff_id] = {}
         current_diff["submission time (dateCreated)"] = diff.dateCreated
         user = session_users.query(User).filter_by(phid=diff.authorPHID).one()
         current_diff["author (userName)"] = user.userName
@@ -124,7 +121,7 @@ for revision in revisions:
             }
 
     # comments
-    output[revision.title]["comments"] = {}
+    output[rev_key]["comments"] = {}
     for transaction in session_diff.query(Transaction).filter_by(
         objectPHID=revision.phid
     ):
@@ -135,7 +132,7 @@ for revision in revisions:
                 .one()
             )
             comment_id = f"comment-{comment.id}"
-            output[revision.title]["comments"][comment_id] = {
+            output[rev_key]["comments"][comment_id] = {
                 "author": user.userName,
                 "timestamp (dateCreated)": comment.dateCreated,
                 "content": comment.content,
