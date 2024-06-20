@@ -48,6 +48,7 @@ Changeset = Base.classes.differential_changeset
 Transaction = Base.classes.differential_transaction
 TransactionComment = Base.classes.differential_transaction_comment
 Reviewer = Base.classes.differential_reviewer
+Edges = Base.classes.edge
 
 # Results
 output = {}
@@ -55,14 +56,23 @@ revisions = session_diff.query(Revision)
 for revision in revisions:
     rev_key = f"{revision.title} ({revision.id})"
     output[rev_key] = {}
-    output[rev_key]["first submission timestamp (dateCreated)"] = revision.dateCreated
-    output[rev_key]["last review id (lastReviewerPHID)"] = revision.lastReviewerPHID
+    output[rev_key][
+        "first submission timestamp (dateCreated)"
+    ] = revision.dateCreated
+    output[rev_key][
+        "last review id (lastReviewerPHID)"
+    ] = revision.lastReviewerPHID
     output[rev_key]["current status"] = revision.status
-    output[rev_key]["stack size (bug-id)"] = revision.id
     repository = session_repo.query(Repo).filter_by(
         repositoryPHID=revision.repositoryPHID
     )
     output[rev_key]["target repository"] = repository.first().uri
+    # stack (edge dependencies)
+    stack_size = session_diff.query(Edges).filter_by(src=revision.phid, type=5).count()
+    for edge_child in session_diff.query(Edges).filter_by(dst=revision.phid, type=5):
+        stack_size += 1
+        stack_size += session_diff.query(Edges).filter_by(src=edge_child.dst, type=6).count()
+    output[rev_key]["stack size"] = stack_size
     # diffs
     output[rev_key]["diffs"] = {}
     for diff in session_diff.query(Diff).filter_by(revisionID=revision.id):
