@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 import sqlalchemy
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.automap import automap_base
 
@@ -64,12 +65,21 @@ for revision in revisions:
     )
     output[rev_key]["target repository"] = repository.first().uri
     # stack (edge dependencies)
-    stack_size = session_diff.query(Edges).filter_by(src=revision.phid, type=5).count()
-    for edge_child in session_diff.query(Edges).filter_by(dst=revision.phid, type=5):
-        stack_size += 1
-        stack_size += (
-            session_diff.query(Edges).filter_by(src=edge_child.dst, type=6).count()
+    stack = set()
+    neighbors = {revision.phid}
+    while len(neighbors) > 0:
+        query_result = session_diff.query(Edges).filter(
+            or_(Edges.src.in_(neighbors), Edges.src.in_(neighbors)),
+            or_(Edges.type.in_([5, 6])),
         )
+        revlist = [x.src for x in query_result.all()]
+        revlist += [x.dst for x in query_result.all()]
+        #        breakpoint()
+        stack = stack | neighbors
+        neighbors = set(revlist) - stack
+
+    stack_size = len(stack)
+
     output[rev_key]["stack size"] = stack_size
     # diffs
     output[rev_key]["diffs"] = {}
