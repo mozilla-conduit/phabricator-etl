@@ -54,7 +54,7 @@ Edges = Base.classes.edge
 output = {}
 revisions = session_diff.query(Revision)
 for revision in revisions:
-    rev_key = f"{revision.title} ({revision.id})"
+    rev_key = f"D{revision.id}"
     output[rev_key] = {}
     output[rev_key][
         "first submission timestamp (dateCreated)"
