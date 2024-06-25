@@ -56,12 +56,8 @@ revisions = session_diff.query(Revision)
 for revision in revisions:
     rev_key = f"D{revision.id}"
     output[rev_key] = {}
-    output[rev_key][
-        "first submission timestamp (dateCreated)"
-    ] = revision.dateCreated
-    output[rev_key][
-        "last review id (lastReviewerPHID)"
-    ] = revision.lastReviewerPHID
+    output[rev_key]["first submission timestamp (dateCreated)"] = revision.dateCreated
+    output[rev_key]["last review id (lastReviewerPHID)"] = revision.lastReviewerPHID
     output[rev_key]["current status"] = revision.status
     repository = session_repo.query(Repo).filter_by(
         repositoryPHID=revision.repositoryPHID
@@ -71,7 +67,9 @@ for revision in revisions:
     stack_size = session_diff.query(Edges).filter_by(src=revision.phid, type=5).count()
     for edge_child in session_diff.query(Edges).filter_by(dst=revision.phid, type=5):
         stack_size += 1
-        stack_size += session_diff.query(Edges).filter_by(src=edge_child.dst, type=6).count()
+        stack_size += (
+            session_diff.query(Edges).filter_by(src=edge_child.dst, type=6).count()
+        )
     output[rev_key]["stack size"] = stack_size
     # diffs
     output[rev_key]["diffs"] = {}
