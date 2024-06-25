@@ -101,7 +101,6 @@ for revision in revisions:
                 current_diff["changesets"][changeset_id]["comments"][comment_id] = {
                     "author": user.userName,
                     "timestamp (dateCreated)": comment.dateCreated,
-                    "content": comment.content,
                     "character count": len(comment.content),
                 }
                 att = json.loads(comment.attributes)
@@ -145,7 +144,6 @@ for revision in revisions:
             output[rev_key]["comments"][comment_id] = {
                 "author": user.userName,
                 "timestamp (dateCreated)": comment.dateCreated,
-                "content": comment.content,
                 "character count": len(comment.content),
             }
 Path("revisions.json").write_text(json.dumps(output, indent=2))
