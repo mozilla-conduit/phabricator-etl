@@ -67,19 +67,23 @@ for revision in revisions:
     # stack (edge dependencies)
     stack = set()
     neighbors = {revision.phid}
+    bug_id = revision.title.split("-")[0]
     while len(neighbors) > 0:
         query_result = session_diff.query(Edges).filter(
             or_(Edges.src.in_(neighbors), Edges.src.in_(neighbors)),
             or_(Edges.type.in_([5, 6])),
         )
-        revlist = [x.src for x in query_result.all()]
-        revlist += [x.dst for x in query_result.all()]
-        #        breakpoint()
+        revlist = []
+        for edge in query_result.all():
+            for rev_src in revisions.filter_by(phid=edge.src):
+                if rev_src.title.split("-")[0] == bug_id:
+                    revlist.append(rev_src.phid)
+            for rev_dst in revisions.filter_by(phid=edge.dst):
+                if rev_dst.title.split("-")[0] == bug_id:
+                    revlist.append(rev_dst.phid)
         stack = stack | neighbors
         neighbors = set(revlist) - stack
-
     stack_size = len(stack)
-
     output[rev_key]["stack size"] = stack_size
     # diffs
     output[rev_key]["diffs"] = {}
