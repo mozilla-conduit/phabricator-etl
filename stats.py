@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 import sqlalchemy
-from sqlalchemy import or_
+from sqlalchemy import desc, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.automap import automap_base
 
@@ -58,7 +58,16 @@ for revision in revisions:
     rev_key = f"D{revision.id}"
     output[rev_key] = {}
     output[rev_key]["first submission timestamp (dateCreated)"] = revision.dateCreated
-    output[rev_key]["last review id (lastReviewerPHID)"] = revision.lastReviewerPHID
+    last_review = (
+        session_diff.query(Reviewer)
+        .filter_by(revisionPHID=revision.phid)
+        .order_by(desc("dateModified"))
+        .first()
+    )
+    last_review_id = None
+    if last_review:
+        last_review_id = last_review.id
+    output[rev_key]["last review id"] = last_review_id
     output[rev_key]["current status"] = revision.status
     repository = session_repo.query(Repo).filter_by(
         repositoryPHID=revision.repositoryPHID
