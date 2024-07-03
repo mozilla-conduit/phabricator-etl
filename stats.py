@@ -29,6 +29,14 @@ Base.prepare(engine_user)
 session_users = Session(engine_user)
 User = Base.classes.user
 
+# Projects
+engine_project = sqlalchemy.create_engine(
+    f"mysql+mysqldb://{DB_USER}:{DB_TOKEN}@{DB_URL}:{DB_PORT}/{DB_NAMESPACE}_project"
+)
+Base.prepare(engine_project)
+session_projects = Session(engine_project)
+Project = Base.classes.project
+
 # Repositories
 engine_repo = engine_user = sqlalchemy.create_engine(
     f"mysql+mysqldb://{DB_USER}:{DB_TOKEN}@{DB_URL}:{DB_PORT}/{DB_NAMESPACE}_repository"
@@ -139,12 +147,22 @@ for revision in revisions:
         for review in session_diff.query(Reviewer).filter_by(
             revisionPHID=revision.phid
         ):
-            reviewer = (
-                session_users.query(User).filter_by(phid=review.reviewerPHID).one()
-            )
+            is_reviewer_group = "PHID-PROJ-" in review.reviewerPHID.decode()
+            if is_reviewer_group:
+                reviewer = (
+                    session_projects.query(Project)
+                    .filter_by(phid=review.reviewerPHID)
+                    .one()
+                )
+                reviewer_name = reviewer.name
+            else:
+                reviewer = (
+                    session_users.query(User).filter_by(phid=review.reviewerPHID).one()
+                )
+                reviewer_name = reviewer.userName
             current_diff["review requests"][f"review-{review.id}"] = {
-                "reviewer": reviewer.userName,
-                "group (isMailingList)": bool(reviewer.isMailingList),
+                "reviewer": reviewer_name,
+                "is group": is_reviewer_group,
                 "creation timestamp": review.dateCreated,
                 "review timestamp": review.dateModified,
                 "status": review.reviewerStatus,
