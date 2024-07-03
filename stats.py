@@ -105,6 +105,9 @@ for revision in revisions:
     # diffs
     output[rev_key]["diffs"] = {}
     for diff in session_diff.query(Diff).filter_by(revisionID=revision.id):
+        if diff.authorPHID == "PHID-APPS-PhabricatorDiffusionApplication":
+            # ignore diffs that were created as a result of the commit landing.
+            continue
         diff_id = f"diff-{diff.id}"
         current_diff = output[rev_key]["diffs"][diff_id] = {}
         current_diff["submission time (dateCreated)"] = diff.dateCreated
