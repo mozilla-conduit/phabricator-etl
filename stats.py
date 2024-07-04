@@ -214,25 +214,21 @@ def get_changeset_comments(changeset, session_diff, session_users):
 def get_comments(revision_phid, session_diff, session_users):
     comments = {}
     for transaction in session_diff.query(DiffDb.Transaction).filter_by(
-        objectPHID=revision_phid
+        objectPHID=revision_phid,
+        transactionType="core:comment",
     ):
-        if transaction.transactionType == "core:comment":
-            comment = (
-                session_diff.query(DiffDb.TransactionComment)
-                .filter_by(phid=transaction.commentPHID)
-                .one()
-            )
-            user = (
-                session_users.query(UserDb.User)
-                .filter_by(phid=comment.authorPHID)
-                .one()
-            )
-            comment_id = f"comment-{comment.id}"
-            comments[comment_id] = {
-                "author": user.userName,
-                "timestamp (dateCreated)": comment.dateCreated,
-                "character count": len(comment.content),
-            }
+        comment = (
+            session_diff.query(DiffDb.TransactionComment)
+            .filter_by(phid=transaction.commentPHID)
+            .one()
+        )
+        user = session_users.query(UserDb.User).filter_by(phid=comment.authorPHID).one()
+        comment_id = f"comment-{comment.id}"
+        comments[comment_id] = {
+            "author": user.userName,
+            "timestamp (dateCreated)": comment.dateCreated,
+            "character count": len(comment.content),
+        }
     return comments
 
 
