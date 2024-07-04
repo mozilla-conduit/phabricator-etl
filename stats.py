@@ -7,6 +7,7 @@
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import sqlalchemy
@@ -235,6 +236,11 @@ def get_comments(revision_phid, session_diff, session_users):
     return comments
 
 
+def export_to_json(output):
+    now = datetime.now().strftime("%Y%m%d")
+    Path(f"revisions_{now}.json").write_text(json.dumps(output, indent=2))
+
+
 def process():
     session_users = Session(engines["user"])
     session_projects = Session(engines["project"])
@@ -259,7 +265,7 @@ def process():
             ),
             "comments": get_comments(revision.phid, session_diff, session_users),
         }
-    Path("revisions.json").write_text(json.dumps(output, indent=2))
+    export_to_json(output)
 
 
 if __name__ == "__main__":
