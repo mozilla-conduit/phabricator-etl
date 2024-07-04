@@ -107,6 +107,9 @@ for revision in revisions:
         if diff.authorPHID == b"PHID-APPS-PhabricatorDiffusionApplication":
             # ignore diffs that were created as a result of the commit landing.
             continue
+        if diff.authorPHID.startswith(b"PHID-RIDT-"):
+            # ignore diffs that were created with repository identity
+            continue
         diff_id = f"diff-{diff.id}"
         current_diff = output[rev_key]["diffs"][diff_id] = {}
         current_diff["submission time (dateCreated)"] = diff.dateCreated
