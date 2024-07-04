@@ -181,8 +181,7 @@ def get_diffs(revision, session_diff, session_users, session_projects):
 def get_changesets(diff, session_diff, session_users):
     changesets = {}
     for changeset in session_diff.query(DiffDb.Changeset).filter_by(diffID=diff.id):
-        changeset_id = f"changeset-{changeset.id}"
-        changesets[changeset_id] = {
+        changesets[f"changeset-{changeset.id}"] = {
             "lines added": changeset.addLines,
             "lines removed": changeset.delLines,
             "comments": get_changeset_comments(changeset, session_diff, session_users),
@@ -195,14 +194,13 @@ def get_changeset_comments(changeset, session_diff, session_users):
     for comment in session_diff.query(DiffDb.TransactionComment).filter_by(
         changesetID=changeset.id
     ):
-        comment_id = f"comment-{comment.id}"
         user = session_users.query(UserDb.User).filter_by(phid=comment.authorPHID).one()
         att = json.loads(comment.attributes)
         is_suggestion = (
             "inline.state.initial" in att
             and att["inline.state.initial"].get("hassuggestion") == "true"
         )
-        comments[comment_id] = {
+        comments[f"comment-{comment.id}"] = {
             "author": user.userName,
             "timestamp (dateCreated)": comment.dateCreated,
             "character count": len(comment.content),
@@ -223,8 +221,7 @@ def get_comments(revision_phid, session_diff, session_users):
             .one()
         )
         user = session_users.query(UserDb.User).filter_by(phid=comment.authorPHID).one()
-        comment_id = f"comment-{comment.id}"
-        comments[comment_id] = {
+        comments[f"comment-{comment.id}"] = {
             "author": user.userName,
             "timestamp (dateCreated)": comment.dateCreated,
             "character count": len(comment.content),
