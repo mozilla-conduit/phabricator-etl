@@ -59,7 +59,6 @@ TransactionComment = Base.classes.differential_transaction_comment
 Reviewer = Base.classes.differential_reviewer
 Edges = Base.classes.edge
 
-# Results
 output = {}
 revisions = session_diff.query(Revision)
 for revision in revisions:
@@ -105,7 +104,7 @@ for revision in revisions:
     # diffs
     output[rev_key]["diffs"] = {}
     for diff in session_diff.query(Diff).filter_by(revisionID=revision.id):
-        if diff.authorPHID == "PHID-APPS-PhabricatorDiffusionApplication":
+        if diff.authorPHID == b"PHID-APPS-PhabricatorDiffusionApplication":
             # ignore diffs that were created as a result of the commit landing.
             continue
         diff_id = f"diff-{diff.id}"
@@ -150,7 +149,7 @@ for revision in revisions:
         for review in session_diff.query(Reviewer).filter_by(
             revisionPHID=revision.phid
         ):
-            is_reviewer_group = "PHID-PROJ-" in review.reviewerPHID.decode()
+            is_reviewer_group = review.reviewerPHID.startswith(b"PHID-PROJ-")
             if is_reviewer_group:
                 reviewer = (
                     session_projects.query(Project)
@@ -170,7 +169,6 @@ for revision in revisions:
                 "review timestamp": review.dateModified,
                 "status": review.reviewerStatus,
             }
-
     # comments
     output[rev_key]["comments"] = {}
     for transaction in session_diff.query(Transaction).filter_by(
