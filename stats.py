@@ -229,8 +229,42 @@ def get_comments(revision_phid, session_diff, session_users):
     return comments
 
 
+def get_last_run_timestamp():
+    """
+    We retrieve the date of the last run in the result file name
+    """
+    last_results_filepath = Path(".").glob("revisions_*_*.json")
+    timestamps = [
+        str(path).strip(".json").split("_")[-1] for path in last_results_filepath
+    ]
+    return max(timestamps) if timestamps else None
+
+
+def get_time_queries(now):
+    """
+    Dont take the revisions created or modified after the start of the run
+    Dont take the revisions created before the last run
+    """
+    queries = [
+        DiffDb.Revision.dateCreated < now.timestamp(),
+        DiffDb.Revision.dateModified < now.timestamp(),
+    ]
+    last_run_timestamp = get_last_run_timestamp()
+    if last_run_timestamp:
+        queries.extend(
+            [
+                DiffDb.Revision.dateCreated > last_run_timestamp,
+                DiffDb.Revision.dateModified < last_run_timestamp,
+            ]
+        )
+    return queries
+
+
 def export_to_json(output, date):
-    Path(f"revisions_{date.strftime('%Y%m%d')}.json").write_text(
+    """
+    We add the timestamp to the filename to keep the last run date
+    """
+    Path(f"revisions_{date.strftime('%Y%m%d')}_{date.timestamp()}.json").write_text(
         json.dumps(output, indent=2)
     )
 
@@ -242,10 +276,8 @@ def process():
     session_repo = Session(engines["repository"])
     session_diff = Session(engines["differential"])
     output = {}
-    revisions = session_diff.query(DiffDb.Revision).filter(
-        DiffDb.Revision.dateCreated < now.timestamp(),
-        DiffDb.Revision.dateModified < now.timestamp(),
-    )
+    time_queries = get_time_queries(now)
+    revisions = session_diff.query(DiffDb.Revision).filter(*time_queries)
     for revision in revisions:
         output[f"D{revision.id}"] = {
             "first submission timestamp (dateCreated)": revision.dateCreated,
