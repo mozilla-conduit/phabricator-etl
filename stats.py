@@ -229,18 +229,23 @@ def get_comments(revision_phid, session_diff, session_users):
     return comments
 
 
-def export_to_json(output):
-    now = datetime.now().strftime("%Y%m%d")
-    Path(f"revisions_{now}.json").write_text(json.dumps(output, indent=2))
+def export_to_json(output, date):
+    Path(f"revisions_{date.strftime('%Y%m%d')}.json").write_text(
+        json.dumps(output, indent=2)
+    )
 
 
 def process():
+    now = datetime.now()
     session_users = Session(engines["user"])
     session_projects = Session(engines["project"])
     session_repo = Session(engines["repository"])
     session_diff = Session(engines["differential"])
     output = {}
-    revisions = session_diff.query(DiffDb.Revision)
+    revisions = session_diff.query(DiffDb.Revision).filter(
+        DiffDb.Revision.dateCreated < now.timestamp(),
+        DiffDb.Revision.dateModified < now.timestamp(),
+    )
     for revision in revisions:
         output[f"D{revision.id}"] = {
             "first submission timestamp (dateCreated)": revision.dateCreated,
@@ -258,7 +263,7 @@ def process():
             ),
             "comments": get_comments(revision.phid, session_diff, session_users),
         }
-    export_to_json(output)
+    export_to_json(output, now)
 
 
 if __name__ == "__main__":
