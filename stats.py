@@ -263,8 +263,9 @@ def get_time_queries(now):
 def export_to_json(output, date):
     """
     We add the timestamp to the filename to keep the last run date
+    We round the timestamp to the nearest second
     """
-    Path(f"revisions_{date.strftime('%Y%m%d')}_{date.timestamp()}.json").write_text(
+    Path(f"revisions_{date.strftime('%Y%m%d')}_{int(date.timestamp())}.json").write_text(
         json.dumps(output, indent=2)
     )
 
