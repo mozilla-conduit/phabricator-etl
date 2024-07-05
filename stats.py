@@ -121,8 +121,8 @@ def get_stack_size(revision, revisions, session_diff):
     return len(stack)
 
 
-def get_user_name(authorPHID, session_users):
-    user = session_users.query(UserDb.User).filter_by(phid=authorPHID).one()
+def get_user_name(author_phid, session_users):
+    user = session_users.query(UserDb.User).filter_by(phid=author_phid).one()
     return user.userName
 
 
