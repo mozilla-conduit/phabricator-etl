@@ -1,6 +1,7 @@
 # phab-etl
-an ETL for Mozilla phabricator instance
 
+An ETL for Mozilla's Phabricator instance.
+ 
 ## Install
 
 ### Operating System
