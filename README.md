@@ -3,8 +3,10 @@ an ETL for Mozilla phabricator instance
 
 ## Install
 
-### apt
-`apt install build-essential python3-dev default-libmysqlclient-dev`
+### Operating System
 
-### python
-`pip install -r requirements`
+Requires Python 3 and the MySQL Client libraries.
+
+### Python
+
+Create a virtual environment or similar (eg. `python3 -m venv venv`) then use pip to install the dependencies: `pip install -r requirements.txt`
