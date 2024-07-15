@@ -12,6 +12,7 @@ from pathlib import Path
 
 import sqlalchemy
 from sqlalchemy import desc, or_
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
 
@@ -92,7 +93,7 @@ def get_target_repository(repository_phid, session_repo):
         .filter_by(repositoryPHID=repository_phid)
         .first()
     )
-    return repository.uri
+    return repository.uri if repository else None
 
 
 def get_stack_size(revision, revisions, session_diff):
@@ -122,9 +123,11 @@ def get_stack_size(revision, revisions, session_diff):
 
 
 def get_user_name(author_phid, session_users):
-    user = session_users.query(UserDb.User).filter_by(phid=author_phid).one()
-    return user.userName
-
+    try:
+        user = session_users.query(UserDb.User).filter_by(phid=author_phid).one()
+        return user.userName
+    except NoResultFound:
+        return None
 
 def get_review_requests(revision_phid, session_diff, session_projects, session_users):
     review_requests = {}
@@ -194,14 +197,13 @@ def get_changeset_comments(changeset, session_diff, session_users):
     for comment in session_diff.query(DiffDb.TransactionComment).filter_by(
         changesetID=changeset.id
     ):
-        user = session_users.query(UserDb.User).filter_by(phid=comment.authorPHID).one()
         att = json.loads(comment.attributes)
         is_suggestion = (
             "inline.state.initial" in att
             and att["inline.state.initial"].get("hassuggestion") == "true"
         )
         comments[f"comment-{comment.id}"] = {
-            "author": user.userName,
+            "author": get_user_name(comment.authorPHID, session_users),
             "timestamp (dateCreated)": comment.dateCreated,
             "character count": len(comment.content),
             "is_suggestion": is_suggestion,
@@ -220,9 +222,8 @@ def get_comments(revision_phid, session_diff, session_users):
             .filter_by(phid=transaction.commentPHID)
             .one()
         )
-        user = session_users.query(UserDb.User).filter_by(phid=comment.authorPHID).one()
         comments[f"comment-{comment.id}"] = {
-            "author": user.userName,
+            "author": get_user_name(comment.authorPHID, session_users),
             "timestamp (dateCreated)": comment.dateCreated,
             "character count": len(comment.content),
         }
