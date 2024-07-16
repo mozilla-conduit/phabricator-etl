@@ -274,7 +274,7 @@ def get_time_queries(now: datetime) -> list:
         queries.extend(
             [
                 DiffDb.Revision.dateCreated > last_run_timestamp,
-                DiffDb.Revision.dateModified < last_run_timestamp,
+                DiffDb.Revision.dateModified > last_run_timestamp,
             ]
         )
     return queries
