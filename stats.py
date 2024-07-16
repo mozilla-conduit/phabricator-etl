@@ -5,7 +5,9 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import json
+import logging
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +25,13 @@ DB_NAMESPACE = os.environ.get("PHAB_NAMESPACE", "bitnami_phabricator")
 DB_PORT = os.environ.get("PHAB_PORT", "3307")
 DB_USER = os.environ.get("PHAB_USER", "root")
 DB_TOKEN = os.environ["PHAB_TOKEN"]
+
+# Configure simple logging.
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] - {%(filename)s:%(lineno)d} %(levelname)s - %(message)s",
+    stream=sys.stdout,
+)
 
 
 def create_engine(table_suffix: str) -> Engine:
@@ -292,14 +301,22 @@ def export_to_json(output: dict[str, Any], date: datetime):
 
 def process():
     now = datetime.now()
+    logging.info(f"Starting Phab-ETL with timestamp {now}.")
+
     session_users = Session(engines["user"])
     session_projects = Session(engines["project"])
     session_repo = Session(engines["repository"])
     session_diff = Session(engines["differential"])
+
     output = {}
     time_queries = get_time_queries(now)
     revisions = session_diff.query(DiffDb.Revision).filter(*time_queries)
+
+    logging.info(f"Found {len(revisions)} for processing.")
+
     for revision in revisions:
+        logging.info(f"Processing revision D{revision.id}.")
+
         output[f"D{revision.id}"] = {
             "first submission timestamp (dateCreated)": revision.dateCreated,
             "last review id": get_last_review_id(revision.phid, session_diff),
@@ -316,6 +333,8 @@ def process():
             ),
             "comments": get_comments(revision.phid, session_diff, session_users),
         }
+
+    logging.info(f"Exporting JSON.")
     export_to_json(output, now)
 
 
