@@ -9,9 +9,11 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Optional, Any
 
 import sqlalchemy
 from sqlalchemy import desc, or_
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
@@ -23,13 +25,13 @@ DB_USER = os.environ.get("PHAB_USER", "root")
 DB_TOKEN = os.environ["PHAB_TOKEN"]
 
 
-def create_engine(table_suffix):
+def create_engine(table_suffix: str) -> Engine:
     return sqlalchemy.create_engine(
         f"mysql+mysqldb://{DB_USER}:{DB_TOKEN}@{DB_URL}:{DB_PORT}/{DB_NAMESPACE}_{table_suffix}"
     )
 
 
-def create_engines():
+def create_engines() -> dict[str, Engine]:
     return {
         "user": create_engine("user"),
         "project": create_engine("project"),
@@ -38,7 +40,7 @@ def create_engines():
     }
 
 
-def prepare_bases(engines):
+def prepare_bases(engines: dict[str, Engine]) -> dict[str, Any]:
     Base = automap_base()
     bases = {}
     for key, engine in engines.items():
@@ -77,7 +79,7 @@ class DiffDb:
     Edges = bases["differential"].classes.edge
 
 
-def get_last_review_id(revision_phid, session_diff):
+def get_last_review_id(revision_phid: str, session_diff: Session) -> Optional[int]:
     last_review = (
         session_diff.query(DiffDb.Reviewer)
         .filter_by(revisionPHID=revision_phid)
@@ -87,7 +89,7 @@ def get_last_review_id(revision_phid, session_diff):
     return last_review.id if last_review else None
 
 
-def get_target_repository(repository_phid, session_repo):
+def get_target_repository(repository_phid: str, session_repo: Session) -> Optional[str]:
     repository = (
         session_repo.query(RepoDb.Repository)
         .filter_by(repositoryPHID=repository_phid)
@@ -96,7 +98,7 @@ def get_target_repository(repository_phid, session_repo):
     return repository.uri if repository else None
 
 
-def get_stack_size(revision, revisions, session_diff):
+def get_stack_size(revision: Any, revisions: Any, session_diff: Session) -> int:
     stack = set()
     neighbors = {revision.phid}
     bug_id = revision.title.split("-")[0]
@@ -122,14 +124,20 @@ def get_stack_size(revision, revisions, session_diff):
     return len(stack)
 
 
-def get_user_name(author_phid, session_users):
+def get_user_name(author_phid: str, session_users: Session) -> Optional[str]:
     try:
         user = session_users.query(UserDb.User).filter_by(phid=author_phid).one()
         return user.userName
     except NoResultFound:
         return None
 
-def get_review_requests(revision_phid, session_diff, session_projects, session_users):
+
+def get_review_requests(
+    revision_phid: str,
+    session_diff: Session,
+    session_projects: Session,
+    session_users: Session,
+) -> dict[str, Any]:
     review_requests = {}
     for review in session_diff.query(DiffDb.Reviewer).filter_by(
         revisionPHID=revision_phid
@@ -159,7 +167,12 @@ def get_review_requests(revision_phid, session_diff, session_projects, session_u
     return review_requests
 
 
-def get_diffs(revision, session_diff, session_users, session_projects):
+def get_diffs(
+    revision: Any,
+    session_diff: Session,
+    session_users: Session,
+    session_projects: Session,
+) -> dict[str, Any]:
     diffs = {}
     for diff in session_diff.query(DiffDb.Differential).filter_by(
         revisionID=revision.id
@@ -181,7 +194,9 @@ def get_diffs(revision, session_diff, session_users, session_projects):
     return diffs
 
 
-def get_changesets(diff, session_diff, session_users):
+def get_changesets(
+    diff: Any, session_diff: Session, session_users: Session
+) -> dict[str, Any]:
     changesets = {}
     for changeset in session_diff.query(DiffDb.Changeset).filter_by(diffID=diff.id):
         changesets[f"changeset-{changeset.id}"] = {
@@ -192,7 +207,9 @@ def get_changesets(diff, session_diff, session_users):
     return changesets
 
 
-def get_changeset_comments(changeset, session_diff, session_users):
+def get_changeset_comments(
+    changeset: Any, session_diff: Session, session_users: Session
+) -> dict[str, Any]:
     comments = {}
     for comment in session_diff.query(DiffDb.TransactionComment).filter_by(
         changesetID=changeset.id
@@ -211,7 +228,9 @@ def get_changeset_comments(changeset, session_diff, session_users):
     return comments
 
 
-def get_comments(revision_phid, session_diff, session_users):
+def get_comments(
+    revision_phid: str, session_diff: Session, session_users: Session
+) -> dict[str, Any]:
     comments = {}
     for transaction in session_diff.query(DiffDb.Transaction).filter_by(
         objectPHID=revision_phid,
@@ -230,7 +249,7 @@ def get_comments(revision_phid, session_diff, session_users):
     return comments
 
 
-def get_last_run_timestamp():
+def get_last_run_timestamp() -> Optional[str]:
     """
     We retrieve the date of the last run in the result file name
     """
@@ -241,7 +260,7 @@ def get_last_run_timestamp():
     return max(timestamps) if timestamps else None
 
 
-def get_time_queries(now):
+def get_time_queries(now: datetime) -> list:
     """
     Dont take the revisions created or modified after the start of the run
     Dont take the revisions created before the last run
@@ -261,14 +280,14 @@ def get_time_queries(now):
     return queries
 
 
-def export_to_json(output, date):
+def export_to_json(output: dict[str, Any], date: datetime):
     """
     We add the timestamp to the filename to keep the last run date
     We round the timestamp to the nearest second
     """
-    Path(f"revisions_{date.strftime('%Y%m%d')}_{int(date.timestamp())}.json").write_text(
-        json.dumps(output, indent=2)
-    )
+    Path(
+        f"revisions_{date.strftime('%Y%m%d')}_{int(date.timestamp())}.json"
+    ).write_text(json.dumps(output, indent=2))
 
 
 def process():
