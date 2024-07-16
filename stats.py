@@ -249,13 +249,13 @@ def get_comments(
     return comments
 
 
-def get_last_run_timestamp() -> Optional[str]:
+def get_last_run_timestamp() -> Optional[int]:
     """
     We retrieve the date of the last run in the result file name
     """
     last_results_filepath = Path(".").glob("revisions_*_*.json")
     timestamps = [
-        str(path).strip(".json").split("_")[-1] for path in last_results_filepath
+        int(filepath.stem.split("_")[-1]) for filepath in last_results_filepath
     ]
     return max(timestamps) if timestamps else None
 
