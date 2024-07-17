@@ -122,12 +122,11 @@ def get_stack_size(revision: Any, revisions: Any, session_diff: Session) -> int:
         )
         revlist = []
         for edge in query_result:
-            for rev_src in revisions.filter_by(phid=edge.src):
-                if rev_src.title.split("-")[0] == bug_id:
-                    revlist.append(rev_src.phid)
-            for rev_dst in revisions.filter_by(phid=edge.dst):
-                if rev_dst.title.split("-")[0] == bug_id:
-                    revlist.append(rev_dst.phid)
+            for node_phid in (edge.src, edge.dst):
+                for rev in revisions.filter_by(phid=node_phid):
+                    if rev.title.split("-")[0] == bug_id:
+                        revlist.append(rev.phid)
+
         stack.update(neighbors)
         neighbors = set(revlist) - stack
     return len(stack)
