@@ -309,11 +309,11 @@ def process():
 
     output = {}
     time_queries = get_time_queries(now)
-    revisions = session_diff.query(DiffDb.Revision).filter(*time_queries)
+    updated_revisions = session_diff.query(DiffDb.Revision).filter(*time_queries)
 
-    logging.info(f"Found {len(revisions)} for processing.")
+    logging.info(f"Found {len(updated_revisions)} for processing.")
 
-    for revision in revisions:
+    for revision in updated_revisions:
         logging.info(f"Processing revision D{revision.id}.")
 
         output[f"D{revision.id}"] = {
@@ -323,7 +323,7 @@ def process():
             "target repository": get_target_repository(
                 revision.repositoryPHID, session_repo
             ),
-            "stack size": get_stack_size(revision, revisions, session_diff),
+            "stack size": get_stack_size(revision, updated_revisions, session_diff),
             "diffs": get_diffs(
                 revision,
                 session_diff,
