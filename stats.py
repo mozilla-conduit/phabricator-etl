@@ -107,7 +107,7 @@ def get_target_repository(repository_phid: str, session_repo: Session) -> Option
     return repository.uri if repository else None
 
 
-def get_stack_size(revision: Any, revisions: Any, session_diff: Session) -> int:
+def get_stack_size(revision: Any, all_revisions: Any, session_diff: Session) -> int:
     stack = set()
     neighbors = {revision.phid}
     bug_id = revision.title.split("-")[0]
@@ -123,7 +123,8 @@ def get_stack_size(revision: Any, revisions: Any, session_diff: Session) -> int:
         revlist = []
         for edge in query_result:
             for node_phid in (edge.src, edge.dst):
-                for rev in revisions.filter_by(phid=node_phid):
+                # Get the revision from the set of revisions.
+                for rev in all_revisions.filter_by(phid=node_phid):
                     if rev.title.split("-")[0] == bug_id:
                         revlist.append(rev.phid)
 
@@ -310,6 +311,7 @@ def process():
     output = {}
     time_queries = get_time_queries(now)
     updated_revisions = session_diff.query(DiffDb.Revision).filter(*time_queries)
+    all_revisions = session_diff.query(DiffDb.Revision).all()
 
     logging.info(f"Found {len(updated_revisions)} for processing.")
 
@@ -323,7 +325,7 @@ def process():
             "target repository": get_target_repository(
                 revision.repositoryPHID, session_repo
             ),
-            "stack size": get_stack_size(revision, updated_revisions, session_diff),
+            "stack size": get_stack_size(revision, all_revisions, session_diff),
             "diffs": get_diffs(
                 revision,
                 session_diff,
