@@ -107,6 +107,10 @@ def get_target_repository(repository_phid: str, session_repo: Session) -> Option
     return repository.uri if repository else None
 
 
+PHAB_DEPENDS_ON_EDGE_CONST = 5
+PHAB_DEPENDED_ON_EDGE_CONST = 6
+
+
 def get_stack_size(revision: Any, all_revisions: Any, session_diff: Session) -> int:
     stack = set()
     neighbors = {revision.phid}
@@ -116,7 +120,9 @@ def get_stack_size(revision: Any, all_revisions: Any, session_diff: Session) -> 
             session_diff.query(DiffDb.Edges)
             .filter(
                 or_(DiffDb.Edges.src.in_(neighbors), DiffDb.Edges.dst.in_(neighbors)),
-                DiffDb.Edges.type.in_([5, 6]),
+                DiffDb.Edges.type.in_(
+                    [PHAB_DEPENDS_ON_EDGE_CONST, PHAB_DEPENDED_ON_EDGE_CONST]
+                ),
             )
             .all()
         )
