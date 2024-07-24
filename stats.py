@@ -116,7 +116,8 @@ def get_stack_size(revision: Any, all_revisions: Any, session_diff: Session) -> 
     neighbors = {revision.phid}
     bug_id = revision.title.split("-")[0]
     while neighbors:
-        query_result = (
+        # Query for all edges related to the current set of neighbors.
+        edge_query_result = (
             session_diff.query(DiffDb.Edges)
             .filter(
                 or_(DiffDb.Edges.src.in_(neighbors), DiffDb.Edges.dst.in_(neighbors)),
@@ -126,16 +127,24 @@ def get_stack_size(revision: Any, all_revisions: Any, session_diff: Session) -> 
             )
             .all()
         )
-        revlist = []
-        for edge in query_result:
+
+        # Create an empty list of revisions that have this as the bug.
+        bug_matching_revlist = []
+        # For each edge related to our current set of neighbors.
+        for edge in edge_query_result:
+            # For each end of the edge.
             for node_phid in (edge.src, edge.dst):
                 # Get the revision from the set of revisions.
                 for rev in all_revisions.filter_by(phid=node_phid):
                     if rev.title.split("-")[0] == bug_id:
-                        revlist.append(rev.phid)
+                        bug_matching_revlist.append(rev.phid)
 
+        # Add neighbors to the stack.
         stack.update(neighbors)
-        neighbors = set(revlist) - stack
+
+        # Re-set neighbors to just the items in the bug match revlist that aren't in the stack.
+        neighbors = set(bug_matching_revlist) - stack
+
     return len(stack)
 
 
@@ -172,6 +181,7 @@ def get_review_requests(
                 .one()
             )
             reviewer_name = reviewer.userName
+
         review_requests[f"review-{review.id}"] = {
             "reviewer": reviewer_name,
             "is group": is_reviewer_group,
@@ -179,6 +189,7 @@ def get_review_requests(
             "review timestamp": review.dateModified,
             "status": review.reviewerStatus,
         }
+
     return review_requests
 
 
@@ -193,11 +204,13 @@ def get_diffs(
         revisionID=revision.id
     ):
         if diff.authorPHID == b"PHID-APPS-PhabricatorDiffusionApplication":
-            # ignore diffs that were created as a result of the commit landing.
+            # Ignore diffs that were created as a result of the commit landing.
             continue
+
         if diff.authorPHID.startswith(b"PHID-RIDT-"):
-            # ignore diffs that were created with repository identity
+            # Ignore diffs that were created with repository identity.
             continue
+
         diffs[f"diff-{diff.id}"] = {
             "submission time (dateCreated)": diff.dateCreated,
             "author (userName)": get_user_name(diff.authorPHID, session_users),
@@ -206,6 +219,7 @@ def get_diffs(
                 revision.phid, session_diff, session_projects, session_users
             ),
         }
+
     return diffs
 
 
