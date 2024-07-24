@@ -20,11 +20,11 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
 
-DB_URL = os.environ.get("PHAB_URL", "127.0.0.1")
-DB_NAMESPACE = os.environ.get("PHAB_NAMESPACE", "bitnami_phabricator")
-DB_PORT = os.environ.get("PHAB_PORT", "3307")
-DB_USER = os.environ.get("PHAB_USER", "root")
-DB_TOKEN = os.environ["PHAB_TOKEN"]
+PHAB_DB_URL = os.environ.get("PHAB_URL", "127.0.0.1")
+PHAB_DB_NAMESPACE = os.environ.get("PHAB_NAMESPACE", "bitnami_phabricator")
+PHAB_DB_PORT = os.environ.get("PHAB_PORT", "3307")
+PHAB_DB_USER = os.environ.get("PHAB_USER", "root")
+PHAB_DB_TOKEN = os.environ["PHAB_TOKEN"]
 
 # Configure simple logging.
 logging.basicConfig(
@@ -36,7 +36,7 @@ logging.basicConfig(
 
 def create_engine(table_suffix: str) -> Engine:
     return sqlalchemy.create_engine(
-        f"mysql+mysqldb://{DB_USER}:{DB_TOKEN}@{DB_URL}:{DB_PORT}/{DB_NAMESPACE}_{table_suffix}"
+        f"mysql+mysqldb://{PHAB_DB_USER}:{PHAB_DB_TOKEN}@{PHAB_DB_URL}:{PHAB_DB_PORT}/{PHAB_DB_NAMESPACE}_{table_suffix}"
     )
 
 
