@@ -331,7 +331,7 @@ def process():
     output = {}
     time_queries = get_time_queries(now)
     updated_revisions = session_diff.query(DiffDb.Revision).filter(*time_queries)
-    all_revisions = session_diff.query(DiffDb.Revision).all()
+    all_revisions = session_diff.query(DiffDb.Revision)
 
     logging.info(f"Found {len(updated_revisions)} for processing.")
 
