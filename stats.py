@@ -348,6 +348,7 @@ def process():
 
         revision_json = {
             "first submission timestamp (dateCreated)": revision.dateCreated,
+            "dateModified": revision.dateModified,
             "last review id": get_last_review_id(revision.phid, session_diff),
             "current status": revision.status,
             "target repository": get_target_repository(
