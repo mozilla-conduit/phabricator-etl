@@ -280,18 +280,30 @@ def get_comments(
     return comments
 
 
-def get_last_run_timestamp() -> Optional[int]:
+def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[int]:
+    """Get the timestamp of the most recently added entry in BigQuery.
+
+    See https://github.com/googleapis/python-bigquery/blob/main/samples/query_script.py
+    for more.
     """
-    We retrieve the date of the last run in the result file name
-    """
-    last_results_filepath = Path(".").glob("revisions_*_*.json")
-    timestamps = [
-        int(filepath.stem.split("_")[-1]) for filepath in last_results_filepath
-    ]
-    return max(timestamps) if timestamps else None
+    # TODO write SQL to query the latest timestamp in BQ.
+    most_recent_run_sql = (
+        "SELECT timestamp FROM <table name> ORDER BY timestamp DESC LIMIT 1;"
+    )
+
+    # TODO is this the correct way to query?
+    parent_job = bq_client.query(most_recent_run_sql)
+    rows = list(parent_job.result())
+
+    if len(rows) != 1:
+        logging.error("Only one row should be returned by timestamp query.")
+        sys.exit(1)
+
+    # TODO is this right?
+    return rows[0]
 
 
-def get_time_queries(now: datetime) -> list:
+def get_time_queries(now: datetime, bq_client: bigquery.Client) -> list:
     """
     Dont take the revisions created or modified after the start of the run
     Dont take the revisions created before the last run
@@ -300,7 +312,7 @@ def get_time_queries(now: datetime) -> list:
         DiffDb.Revision.dateCreated < now.timestamp(),
         DiffDb.Revision.dateModified < now.timestamp(),
     ]
-    last_run_timestamp = get_last_run_timestamp()
+    last_run_timestamp = get_last_run_timestamp(bq_client)
     if last_run_timestamp:
         queries.extend(
             [
