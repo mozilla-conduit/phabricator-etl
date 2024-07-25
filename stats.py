@@ -14,12 +14,14 @@ from pathlib import Path
 from typing import Optional, Any
 
 import sqlalchemy
+from google.cloud import bigquery
 from sqlalchemy import desc, or_
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
 
+BQ_TABLE_ID = os.environ["BQ_TABLE_ID"]
 PHAB_DB_URL = os.environ.get("PHAB_URL", "127.0.0.1")
 PHAB_DB_NAMESPACE = os.environ.get("PHAB_NAMESPACE", "bitnami_phabricator")
 PHAB_DB_PORT = os.environ.get("PHAB_PORT", "3307")
@@ -309,18 +311,9 @@ def get_time_queries(now: datetime) -> list:
     return queries
 
 
-def export_to_json(output: dict[str, Any], date: datetime):
-    """
-    We add the timestamp to the filename to keep the last run date
-    We round the timestamp to the nearest second
-    """
-    Path(
-        f"revisions_{date.strftime('%Y%m%d')}_{int(date.timestamp())}.json"
-    ).write_text(json.dumps(output, indent=2))
-
-
 def process():
     now = datetime.now()
+
     logging.info(f"Starting Phab-ETL with timestamp {now}.")
 
     session_users = Session(engines["user"])
@@ -328,8 +321,11 @@ def process():
     session_repo = Session(engines["repository"])
     session_diff = Session(engines["differential"])
 
-    output = {}
-    time_queries = get_time_queries(now)
+    # TODO doo we need to set environment variable to make this work/
+    bq_client = bigquery.Client()
+
+    time_queries = get_time_queries(now, bq_client)
+
     updated_revisions = session_diff.query(DiffDb.Revision).filter(*time_queries)
     all_revisions = session_diff.query(DiffDb.Revision)
 
@@ -338,7 +334,7 @@ def process():
     for revision in updated_revisions:
         logging.info(f"Processing revision D{revision.id}.")
 
-        output[f"D{revision.id}"] = {
+        revision_json = {
             "first submission timestamp (dateCreated)": revision.dateCreated,
             "last review id": get_last_review_id(revision.phid, session_diff),
             "current status": revision.status,
@@ -355,8 +351,15 @@ def process():
             "comments": get_comments(revision.phid, session_diff, session_users),
         }
 
-    logging.info(f"Exporting JSON.")
-    export_to_json(output, now)
+        # Submit to BigQuery.
+        errors = bq_client.insert_rows_json(BQ_TABLE_ID, [revision_json])
+        if errors:
+            logging.error(
+                f"Encountered errors while inserting rows to BigQuery: {errors}."
+            )
+            sys.exit(1)
+
+        logging.info(f"Updated revision D{revision.id} in BigQuery.")
 
 
 if __name__ == "__main__":
