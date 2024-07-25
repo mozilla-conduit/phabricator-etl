@@ -186,9 +186,9 @@ def get_review_requests(
 
         review_requests[f"review-{review.id}"] = {
             "reviewer": reviewer_name,
-            "is group": is_reviewer_group,
-            "creation timestamp": review.dateCreated,
-            "review timestamp": review.dateModified,
+            "is_group": is_reviewer_group,
+            "date_created": review.dateCreated,
+            "date_modified": review.dateModified,
             "status": review.reviewerStatus,
         }
 
@@ -214,10 +214,10 @@ def get_diffs(
             continue
 
         diffs[f"diff-{diff.id}"] = {
-            "submission time (dateCreated)": diff.dateCreated,
-            "author (userName)": get_user_name(diff.authorPHID, session_users),
+            "date_created": diff.dateCreated,
+            "author": get_user_name(diff.authorPHID, session_users),
             "changesets": get_changesets(diff, session_diff, session_users),
-            "review requests": get_review_requests(
+            "review_requests": get_review_requests(
                 revision.phid, session_diff, session_projects, session_users
             ),
         }
@@ -231,8 +231,8 @@ def get_changesets(
     changesets = {}
     for changeset in session_diff.query(DiffDb.Changeset).filter_by(diffID=diff.id):
         changesets[f"changeset-{changeset.id}"] = {
-            "lines added": changeset.addLines,
-            "lines removed": changeset.delLines,
+            "lines_added": changeset.addLines,
+            "lines_removed": changeset.delLines,
             "comments": get_changeset_comments(changeset, session_diff, session_users),
         }
     return changesets
@@ -252,8 +252,8 @@ def get_changeset_comments(
         )
         comments[f"comment-{comment.id}"] = {
             "author": get_user_name(comment.authorPHID, session_users),
-            "timestamp (dateCreated)": comment.dateCreated,
-            "character count": len(comment.content),
+            "date_created": comment.dateCreated,
+            "character_count": len(comment.content),
             "is_suggestion": is_suggestion,
         }
     return comments
@@ -274,8 +274,8 @@ def get_comments(
         )
         comments[f"comment-{comment.id}"] = {
             "author": get_user_name(comment.authorPHID, session_users),
-            "timestamp (dateCreated)": comment.dateCreated,
-            "character count": len(comment.content),
+            "date_created": comment.dateCreated,
+            "character_count": len(comment.content),
         }
     return comments
 
@@ -347,14 +347,14 @@ def process():
         logging.info(f"Processing revision D{revision.id}.")
 
         revision_json = {
-            "first submission timestamp (dateCreated)": revision.dateCreated,
-            "dateModified": revision.dateModified,
-            "last review id": get_last_review_id(revision.phid, session_diff),
-            "current status": revision.status,
-            "target repository": get_target_repository(
+            "date_created": revision.dateCreated,
+            "date_modified": revision.dateModified,
+            "last_review_id": get_last_review_id(revision.phid, session_diff),
+            "current_status": revision.status,
+            "target_repository": get_target_repository(
                 revision.repositoryPHID, session_repo
             ),
-            "stack size": get_stack_size(revision, all_revisions, session_diff),
+            "stack_size": get_stack_size(revision, all_revisions, session_diff),
             "diffs": get_diffs(
                 revision,
                 session_diff,
