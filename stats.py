@@ -372,7 +372,7 @@ def process():
             )
             sys.exit(1)
 
-        logging.info(f"Updated revision D{revision.id} in BigQuery.")
+        logging.info(f"Submitted revision D{revision.id} in BigQuery.")
 
 
 if __name__ == "__main__":
