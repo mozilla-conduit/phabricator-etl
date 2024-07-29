@@ -287,6 +287,9 @@ def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[int]:
     See https://github.com/googleapis/python-bigquery/blob/main/samples/query_script.py
     for more.
     """
+    if DEBUG:
+        return None
+
     # TODO write SQL to query the latest timestamp in BQ.
     most_recent_run_sql = (
         "SELECT timestamp FROM <table name> ORDER BY timestamp DESC LIMIT 1;"
