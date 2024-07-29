@@ -89,6 +89,7 @@ class DiffDb:
     TransactionComment = bases["differential"].classes.differential_transaction_comment
     Reviewer = bases["differential"].classes.differential_reviewer
     Edges = bases["differential"].classes.edge
+    CustomFieldStorage = bases["differential"].classes.differential_customfieldstorage
 
 
 def get_last_review_id(revision_phid: str, session_diff: Session) -> Optional[int]:
@@ -114,10 +115,16 @@ PHAB_DEPENDS_ON_EDGE_CONST = 5
 PHAB_DEPENDED_ON_EDGE_CONST = 6
 
 
-def get_stack_size(revision: Any, all_revisions: Any, session_diff: Session) -> int:
+def get_stack_size(
+    revision: Any, all_revisions: Any, bug_id_query: Any, session_diff: Session
+) -> int:
     stack = set()
     neighbors = {revision.phid}
-    bug_id = revision.title.split("-")[0]
+
+    bug_id = bug_id_query.filter(
+        DiffDb.CustomFieldStorage.objectPHID == revision.phid
+    ).one()
+
     while neighbors:
         # Query for all edges related to the current set of neighbors.
         edge_query_result = (
@@ -139,7 +146,12 @@ def get_stack_size(revision: Any, all_revisions: Any, session_diff: Session) -> 
             for node_phid in (edge.src, edge.dst):
                 # Get the revision from the set of revisions.
                 for rev in all_revisions.filter_by(phid=node_phid):
-                    if rev.title.split("-")[0] == bug_id:
+                    # Get the bug ID for the neighbor.
+                    neighbor_bug_id = bug_id_query.filter(
+                        DiffDb.CustomFieldStorage.objectPHID == rev.phid
+                    ).one()
+
+                    if neighbor_bug_id == bug_id:
                         bug_matching_revlist.append(rev.phid)
 
         # Add neighbors to the stack.
@@ -345,6 +357,12 @@ def process():
     updated_revisions = session_diff.query(DiffDb.Revision).filter(*time_queries)
     all_revisions = session_diff.query(DiffDb.Revision)
 
+    bug_id_query = session_diff.query(DiffDb.CustomFieldStorage).filter(
+        # TODO I got this value from the DB, what is it?
+        DiffDb.CustomFieldStorage.fieldIndex
+        == b"zdMFYM6423ua"
+    )
+
     logging.info(f"Found {updated_revisions.count()} revisions for processing.")
 
     for revision in updated_revisions:
@@ -358,7 +376,9 @@ def process():
             "target_repository": get_target_repository(
                 revision.repositoryPHID, session_repo
             ),
-            "stack_size": get_stack_size(revision, all_revisions, session_diff),
+            "stack_size": get_stack_size(
+                revision, all_revisions, bug_id_query, session_diff
+            ),
             "diffs": get_diffs(
                 revision,
                 session_diff,
