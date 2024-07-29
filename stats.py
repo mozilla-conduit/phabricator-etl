@@ -7,6 +7,7 @@
 import json
 import logging
 import os
+import pprint
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,6 +23,7 @@ from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
 
 BQ_TABLE_ID = os.environ["BQ_TABLE_ID"]
+DEBUG = "DEBUG" in os.environ
 PHAB_DB_URL = os.environ.get("PHAB_URL", "127.0.0.1")
 PHAB_DB_NAMESPACE = os.environ.get("PHAB_NAMESPACE", "bitnami_phabricator")
 PHAB_DB_PORT = os.environ.get("PHAB_PORT", "3307")
@@ -363,6 +365,10 @@ def process():
             ),
             "comments": get_comments(revision.phid, session_diff, session_users),
         }
+
+        if DEBUG:
+            pprint.pprint(revision_json)
+            continue
 
         # Submit to BigQuery.
         errors = bq_client.insert_rows_json(BQ_TABLE_ID, [revision_json])
