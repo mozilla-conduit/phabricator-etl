@@ -313,9 +313,7 @@ def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[int]:
         return None
 
     # TODO write SQL to query the latest timestamp in BQ.
-    most_recent_run_sql = (
-        "SELECT timestamp FROM <table name> ORDER BY timestamp DESC LIMIT 1;"
-    )
+    most_recent_run_sql = f"SELECT MAX(date_modified) FROM `{BQ_TABLE_ID}`"
 
     # TODO is this the correct way to query?
     parent_job = bq_client.query(most_recent_run_sql)
@@ -339,13 +337,18 @@ def get_time_queries(now: datetime, bq_client: bigquery.Client) -> list:
         DiffDb.Revision.dateModified < now.timestamp(),
     ]
     last_run_timestamp = get_last_run_timestamp(bq_client)
+
     if last_run_timestamp:
+        logging.info(f"Using {last_run_timestamp} as the last run timestamp.")
         queries.extend(
             [
                 DiffDb.Revision.dateCreated > last_run_timestamp,
                 DiffDb.Revision.dateModified > last_run_timestamp,
             ]
         )
+    else:
+        logging.info("No last run found, starting from the beginning.")
+
     return queries
 
 
