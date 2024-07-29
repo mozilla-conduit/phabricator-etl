@@ -121,12 +121,14 @@ def get_stack_size(
     stack = set()
     neighbors = {revision.phid}
 
-    bug_id = bug_id_query.filter(
+    bug_id_query_result = bug_id_query.filter(
         DiffDb.CustomFieldStorage.objectPHID == revision.phid
     ).one_or_none()
 
-    if not bug_id:
+    if not bug_id_query_result:
         return 1
+
+    bug_id = bug_id_query_result.fieldValue
 
     while neighbors:
         # Query for all edges related to the current set of neighbors.
@@ -150,9 +152,14 @@ def get_stack_size(
                 # Get the revision from the set of revisions.
                 for rev in all_revisions.filter_by(phid=node_phid):
                     # Get the bug ID for the neighbor.
-                    neighbor_bug_id = bug_id_query.filter(
+                    neighbor_bug_id_query_result = bug_id_query.filter(
                         DiffDb.CustomFieldStorage.objectPHID == rev.phid
                     ).one_or_none()
+
+                    if not neighbor_bug_id_query_result:
+                        continue
+
+                    neighbor_bug_id = neighbor_bug_id_query_result.fieldValue
 
                     if neighbor_bug_id == bug_id:
                         bug_matching_revlist.append(rev.phid)
