@@ -186,8 +186,8 @@ def get_review_requests(
     session_diff: Session,
     session_projects: Session,
     session_users: Session,
-) -> dict[str, Any]:
-    review_requests = {}
+) -> list[dict]:
+    review_requests = []
     for review in session_diff.query(DiffDb.Reviewer).filter_by(
         revisionPHID=revision_phid
     ):
@@ -207,13 +207,15 @@ def get_review_requests(
             )
             reviewer_name = reviewer.userName
 
-        review_requests[f"review-{review.id}"] = {
+        review_obj = {
             "reviewer": reviewer_name,
             "is_group": is_reviewer_group,
             "date_created": review.dateCreated,
             "date_modified": review.dateModified,
             "status": review.reviewerStatus,
         }
+
+        review_requests.append(review_obj)
 
     return review_requests
 
@@ -223,8 +225,8 @@ def get_diffs(
     session_diff: Session,
     session_users: Session,
     session_projects: Session,
-) -> dict[str, Any]:
-    diffs = {}
+) -> list[dict]:
+    diffs = []
     for diff in session_diff.query(DiffDb.Differential).filter_by(
         revisionID=revision.id
     ):
@@ -236,7 +238,7 @@ def get_diffs(
             # Ignore diffs that were created with repository identity.
             continue
 
-        diffs[f"diff-{diff.id}"] = {
+        diff_obj = {
             "date_created": diff.dateCreated,
             "author": get_user_name(diff.authorPHID, session_users),
             "changesets": get_changesets(diff, session_diff, session_users),
@@ -245,26 +247,31 @@ def get_diffs(
             ),
         }
 
+        diffs.append(diff_obj)
+
     return diffs
 
 
 def get_changesets(
     diff: Any, session_diff: Session, session_users: Session
-) -> dict[str, Any]:
-    changesets = {}
+) -> list[dict]:
+    changesets = []
     for changeset in session_diff.query(DiffDb.Changeset).filter_by(diffID=diff.id):
-        changesets[f"changeset-{changeset.id}"] = {
+        changeset_obj = {
             "lines_added": changeset.addLines,
             "lines_removed": changeset.delLines,
             "comments": get_changeset_comments(changeset, session_diff, session_users),
         }
+
+        changesets.append(changeset_obj)
+
     return changesets
 
 
 def get_changeset_comments(
     changeset: Any, session_diff: Session, session_users: Session
-) -> dict[str, Any]:
-    comments = {}
+) -> list[dict]:
+    comments = []
     for comment in session_diff.query(DiffDb.TransactionComment).filter_by(
         changesetID=changeset.id
     ):
@@ -273,19 +280,22 @@ def get_changeset_comments(
             "inline.state.initial" in att
             and att["inline.state.initial"].get("hassuggestion") == "true"
         )
-        comments[f"comment-{comment.id}"] = {
+        comment_obj = {
             "author": get_user_name(comment.authorPHID, session_users),
             "date_created": comment.dateCreated,
             "character_count": len(comment.content),
             "is_suggestion": is_suggestion,
         }
+
+        comments.append(comment_obj)
+
     return comments
 
 
 def get_comments(
     revision_phid: str, session_diff: Session, session_users: Session
-) -> dict[str, Any]:
-    comments = {}
+) -> list[dict]:
+    comments = []
     for transaction in session_diff.query(DiffDb.Transaction).filter_by(
         objectPHID=revision_phid,
         transactionType="core:comment",
@@ -295,11 +305,14 @@ def get_comments(
             .filter_by(phid=transaction.commentPHID)
             .one()
         )
-        comments[f"comment-{comment.id}"] = {
+        comment_obj = {
             "author": get_user_name(comment.authorPHID, session_users),
             "date_created": comment.dateCreated,
             "character_count": len(comment.content),
         }
+
+        comments.append(comment_obj)
+
     return comments
 
 
