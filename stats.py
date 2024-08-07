@@ -395,6 +395,7 @@ def process():
         logging.info(f"Processing revision D{revision.id}.")
 
         revision_json = {
+            "id": revision.id,
             "date_created": revision.dateCreated,
             "date_modified": revision.dateModified,
             "last_review_id": get_last_review_id(revision.phid, session_diff),
