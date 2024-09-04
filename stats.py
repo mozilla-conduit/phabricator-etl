@@ -68,6 +68,7 @@ bases = prepare_bases(engines)
 @dataclass
 class UserDb:
     User = bases["user"].classes.user
+    UserEmail = bases["user"].classes.user_email
 
 
 @dataclass
@@ -181,6 +182,16 @@ def get_user_name(author_phid: str, session_users: Session) -> Optional[str]:
         return None
 
 
+def get_user_email(author_phid: str, session_users: Session) -> Optional[str]:
+    try:
+        user_email = (
+            session_users.query(UserDb.UserEmail).filter_by(phid=author_phid).one()
+        )
+        return user_email.address
+    except NoResultFound:
+        return None
+
+
 def get_review_requests(
     revision_phid: str,
     session_diff: Session,
@@ -240,7 +251,8 @@ def get_diffs(
 
         diff_obj = {
             "date_created": diff.dateCreated,
-            "author": get_user_name(diff.authorPHID, session_users),
+            "author_email": get_user_email(diff.authorPHID, session_users),
+            "author_username": get_user_name(diff.authorPHID, session_users),
             "changesets": get_changesets(diff, session_diff, session_users),
             "review_requests": get_review_requests(
                 revision.phid, session_diff, session_projects, session_users
@@ -281,7 +293,8 @@ def get_changeset_comments(
             and att["inline.state.initial"].get("hassuggestion") == "true"
         )
         comment_obj = {
-            "author": get_user_name(comment.authorPHID, session_users),
+            "author_email": get_user_email(comment.authorPHID, session_users),
+            "author_username": get_user_name(comment.authorPHID, session_users),
             "date_created": comment.dateCreated,
             "character_count": len(comment.content),
             "is_suggestion": is_suggestion,
@@ -306,7 +319,8 @@ def get_comments(
             .one()
         )
         comment_obj = {
-            "author": get_user_name(comment.authorPHID, session_users),
+            "author_email": get_user_email(comment.authorPHID, session_users),
+            "author_username": get_user_name(comment.authorPHID, session_users),
             "date_created": comment.dateCreated,
             "character_count": len(comment.content),
         }
