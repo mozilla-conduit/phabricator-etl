@@ -211,12 +211,7 @@ def get_review_requests(
             )
             reviewer_name = reviewer.name
         else:
-            reviewer = (
-                session_users.query(UserDb.User)
-                .filter_by(phid=review.reviewerPHID)
-                .one()
-            )
-            reviewer_name = reviewer.userName
+            reviewer_name = get_user_name(review.reviewerPHID, session_users)
 
         review_obj = {
             "reviewer": reviewer_name,
