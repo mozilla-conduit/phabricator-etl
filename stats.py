@@ -21,7 +21,12 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
 
-BQ_TABLE_ID = os.environ["BQ_TABLE_ID"]
+BQ_REVISIONS_TABLE_ID = os.environ["BQ_REVISIONS_TABLE_ID"]
+BQ_DIFFS_TABLE_ID = os.environ["BQ_DIFFS_TABLE_ID"]
+BQ_CHANGESETS_TABLE_ID = os.environ["BQ_CHANGESETS_TABLE_ID"]
+BQ_COMMENTS_TABLE_ID = os.environ["BQ_COMMENTS_TABLE_ID"]
+BQ_REVIEW_REQUESTS_TABLE_ID = os.environ["BQ_REVIEW_REQUESTS_TABLE_ID"]
+
 DEBUG = "DEBUG" in os.environ
 PHAB_DB_URL = os.environ.get("PHAB_URL", "127.0.0.1")
 PHAB_DB_NAMESPACE = os.environ.get("PHAB_NAMESPACE", "bitnami_phabricator")
@@ -436,7 +441,12 @@ def process():
             pprint.pprint(revision_json)
             continue
 
-        submit_to_bigquery(bq_client, BQ_TABLE_ID, [revision_json])
+        # Send data to BigQuery.
+        submit_to_bigquery(bq_client, BQ_REVISIONS_TABLE_ID, [revision_json])
+        submit_to_bigquery(bq_client, BQ_DIFFS_TABLE_ID, diffs)
+        submit_to_bigquery(bq_client, BQ_CHANGESETS_TABLE_ID, changesets)
+        submit_to_bigquery(bq_client, BQ_REVIEW_REQUESTS_TABLE_ID, review_requests)
+        submit_to_bigquery(bq_client, BQ_COMMENTS_TABLE_ID, comments)
 
         logging.info(f"Submitted revision D{revision.id} in BigQuery.")
 
