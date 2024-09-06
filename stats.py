@@ -374,6 +374,13 @@ def get_time_queries(now: datetime, bq_client: bigquery.Client) -> list:
     return queries
 
 
+def submit_to_bigquery(bq_client: bigquery.Client, table_id: str, rows: list[dict]):
+    errors = bq_client.insert_rows_json(table_id, rows)
+    if errors:
+        logging.error(f"Encountered errors while inserting rows to BigQuery: {errors}.")
+        sys.exit(1)
+
+
 def process():
     now = datetime.now()
 
@@ -428,13 +435,7 @@ def process():
             pprint.pprint(revision_json)
             continue
 
-        # Submit to BigQuery.
-        errors = bq_client.insert_rows_json(BQ_TABLE_ID, [revision_json])
-        if errors:
-            logging.error(
-                f"Encountered errors while inserting rows to BigQuery: {errors}."
-            )
-            sys.exit(1)
+        submit_to_bigquery(bq_client, BQ_TABLE_ID, [revision_json])
 
         logging.info(f"Submitted revision D{revision.id} in BigQuery.")
 
