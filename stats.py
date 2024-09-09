@@ -185,7 +185,7 @@ def get_user_name(author_phid: str, session_users: Session) -> Optional[str]:
 def get_user_email(author_phid: str, session_users: Session) -> Optional[str]:
     try:
         user_email = (
-            session_users.query(UserDb.UserEmail).filter_by(phid=author_phid).one()
+            session_users.query(UserDb.UserEmail).filter_by(userPHID=author_phid).one()
         )
         return user_email.address
     except NoResultFound:
