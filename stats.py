@@ -265,6 +265,7 @@ def get_changesets(
     changesets = []
     for changeset in session_diff.query(DiffDb.Changeset).filter_by(diffID=diff.id):
         changeset_obj = {
+            "filename": changeset.filename,
             "lines_added": changeset.addLines,
             "lines_removed": changeset.delLines,
             "comments": get_changeset_comments(changeset, session_diff, session_users),
