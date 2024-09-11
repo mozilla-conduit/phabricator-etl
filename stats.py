@@ -348,7 +348,7 @@ def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[int]:
         return None
 
     # TODO write SQL to query the latest timestamp in BQ.
-    most_recent_run_sql = f"SELECT MAX(date_modified) FROM `{BQ_TABLE_ID}`"
+    most_recent_run_sql = f"SELECT MAX(date_modified) FROM `{BQ_REVISIONS_TABLE_ID}`"
 
     # TODO is this the correct way to query?
     parent_job = bq_client.query(most_recent_run_sql)
