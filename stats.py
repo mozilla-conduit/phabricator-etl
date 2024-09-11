@@ -319,11 +319,18 @@ def get_comments(
             .filter_by(phid=transaction.commentPHID)
             .one()
         )
+
+        att = json.loads(comment.attributes)
+        is_suggestion = (
+            "inline.state.initial" in att
+            and att["inline.state.initial"].get("hassuggestion") == "true"
+        )
         comment_obj = {
             "author_email": get_user_email(comment.authorPHID, session_users),
             "author_username": get_user_name(comment.authorPHID, session_users),
             "date_created": comment.dateCreated,
             "character_count": len(comment.content),
+            "is_suggestion": is_suggestion,
         }
 
         comments.append(comment_obj)
