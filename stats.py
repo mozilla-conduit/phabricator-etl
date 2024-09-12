@@ -410,6 +410,9 @@ def get_time_queries(now: datetime, bq_client: bigquery.Client) -> list:
 
 
 def submit_to_bigquery(bq_client: bigquery.Client, table_id: str, rows: list[dict]):
+    if not rows:
+        return
+
     errors = bq_client.insert_rows_json(table_id, rows)
     if errors:
         logging.error(f"Encountered errors while inserting rows to BigQuery: {errors}.")
