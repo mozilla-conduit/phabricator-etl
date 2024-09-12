@@ -215,11 +215,14 @@ def get_review_requests(
                 .one()
             )
             reviewer_name = reviewer.name
+            reviewer_email = None
         else:
             reviewer_name = get_user_name(review.reviewerPHID, session_users)
+            reviewer_email = get_user_email(review.reviewerPHID, session_users)
 
         review_obj = {
-            "reviewer": reviewer_name,
+            "reviewer_name": reviewer_name,
+            "reviewer_email": reviewer_email,
             "is_group": is_reviewer_group,
             "date_created": review.dateCreated,
             "date_modified": review.dateModified,
