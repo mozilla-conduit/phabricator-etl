@@ -266,6 +266,8 @@ def get_diffs(
             continue
 
         diff_obj = {
+            "diff_id": diff.id,
+            "revision_id": revision.id,
             "date_created": diff.dateCreated,
             "author_email": get_user_email(diff.authorPHID, session_users),
             "author_username": get_user_name(diff.authorPHID, session_users),
