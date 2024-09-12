@@ -253,13 +253,13 @@ def get_review_requests(
     return review_requests
 
 
-def get_diffs(
-    revision: Any,
+def get_diffs_changesets(
+    revision: DiffDb.Revision,
     session_diff: Session,
     session_users: Session,
-    session_projects: Session,
-) -> list[dict]:
+) -> tuple[list[dict], list[dict]]:
     diffs = []
+    changesets = []
     for diff in session_diff.query(DiffDb.Differential).filter_by(
         revisionID=revision.id
     ):
@@ -277,26 +277,26 @@ def get_diffs(
             "date_created": diff.dateCreated,
             "author_email": get_user_email(diff.authorPHID, session_users),
             "author_username": get_user_name(diff.authorPHID, session_users),
-            "changesets": get_changesets(diff, session_diff, session_users),
-            "review_requests": get_review_requests(
-                revision.phid, session_diff, session_projects, session_users
-            ),
         }
 
         diffs.append(diff_obj)
+        changesets.extend(get_changesets(revision, diff, session_diff))
 
-    return diffs
+    return diffs, changesets
 
 
 def get_changesets(
-    diff: Any, session_diff: Session, session_users: Session
+    revision: DiffDb.Revision, diff: DiffDb.Differential, session_diff: Session
 ) -> list[dict]:
     changesets = []
     for changeset in session_diff.query(DiffDb.Changeset).filter_by(diffID=diff.id):
         changeset_obj = {
-            "filename": changeset.filename,
+            "revision_id": revision.id,
+            "diff_id": diff.id,
+            "changeset_id": changeset.id,
             "lines_added": changeset.addLines,
             "lines_removed": changeset.delLines,
+            "filename": changeset.filename,
         }
 
         changesets.append(changeset_obj)
@@ -436,14 +436,19 @@ def process():
             "stack_size": get_stack_size(
                 revision, all_revisions, bug_id_query, session_diff
             ),
-            "diffs": get_diffs(
-                revision,
-                session_diff,
-                session_users,
-                session_projects,
-            ),
-            "comments": get_comments(revision.phid, session_diff, session_users),
         }
+
+        diffs, changesets = get_diffs_changesets(
+            revision,
+            session_diff,
+            session_users,
+        )
+
+        review_requests = get_review_requests(
+            revision, session_diff, session_projects, session_users
+        )
+
+        comments = get_comments(revision, session_diff, session_users)
 
         if DEBUG:
             pprint.pprint(revision_json)
