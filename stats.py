@@ -316,11 +316,12 @@ def get_comments(
 
     comment_transaction_phids = (
         session_diff.query(DiffDb.Transaction)
+        .with_entities(DiffDb.Transaction.phid)
         .filter_by(
             objectPHID=revision.phid,
             transactionType="core:comment",
         )
-        .with_entities(DiffDb.Transaction.phid)
+        .all()
     )
 
     for comment in session_diff.query(DiffDb.TransactionComment).filter(
