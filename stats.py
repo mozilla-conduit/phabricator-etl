@@ -123,7 +123,12 @@ def diff_phid_to_id(diff_phid: str, session_diff: Session) -> int:
     return diff.id
 
 
-def get_diff_id_for_changeset(changeset_id: int, session_diff: Session) -> int:
+def get_diff_id_for_changeset(
+    changeset_id: Optional[int], session_diff: Session
+) -> Optional[int]:
+    if changeset_id is None:
+        return None
+
     changeset = session_diff.query(DiffDb.Changeset).filter_by(id=changeset_id).one()
 
     return changeset.diffID
