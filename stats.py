@@ -273,7 +273,7 @@ def get_diffs_changesets(
     for diff in session_diff.query(DiffDb.Differential).filter_by(
         revisionID=revision.id
     ):
-        if diff.authorPHID == b"PHID-APPS-PhabricatorDiffusionApplication":
+        if diff.creationMethod == "commit":
             # Ignore diffs that were created as a result of the commit landing.
             continue
 
