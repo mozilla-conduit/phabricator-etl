@@ -221,6 +221,7 @@ def get_review_requests(
             reviewer_email = get_user_email(review.reviewerPHID, session_users)
 
         review_obj = {
+            "revision_id": revision.id,
             "reviewer_name": reviewer_name,
             "reviewer_email": reviewer_email,
             "is_group": is_reviewer_group,
