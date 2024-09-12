@@ -297,37 +297,11 @@ def get_changesets(
             "filename": changeset.filename,
             "lines_added": changeset.addLines,
             "lines_removed": changeset.delLines,
-            "comments": get_changeset_comments(changeset, session_diff, session_users),
         }
 
         changesets.append(changeset_obj)
 
     return changesets
-
-
-def get_changeset_comments(
-    changeset: Any, session_diff: Session, session_users: Session
-) -> list[dict]:
-    comments = []
-    for comment in session_diff.query(DiffDb.TransactionComment).filter_by(
-        changesetID=changeset.id
-    ):
-        att = json.loads(comment.attributes)
-        is_suggestion = (
-            "inline.state.initial" in att
-            and att["inline.state.initial"].get("hassuggestion") == "true"
-        )
-        comment_obj = {
-            "author_email": get_user_email(comment.authorPHID, session_users),
-            "author_username": get_user_name(comment.authorPHID, session_users),
-            "date_created": comment.dateCreated,
-            "character_count": len(comment.content),
-            "is_suggestion": is_suggestion,
-        }
-
-        comments.append(comment_obj)
-
-    return comments
 
 
 def get_comments(
@@ -349,6 +323,7 @@ def get_comments(
             "inline.state.initial" in att
             and att["inline.state.initial"].get("hassuggestion") == "true"
         )
+
         comment_obj = {
             "revision_id": revision.id,
             "diff_id": get_diff_id_for_changeset(comment.changesetID, session_diff),
