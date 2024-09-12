@@ -117,6 +117,12 @@ def get_target_repository(repository_phid: str, session_repo: Session) -> Option
     return repository.uri if repository else None
 
 
+def diff_phid_to_id(diff_phid: str, session_diff: Session) -> int:
+    diff = session_diff.query(DiffDb.Differential).filter_by(phid=diff_phid).one()
+
+    return diff.id
+
+
 PHAB_DEPENDS_ON_EDGE_CONST = 5
 PHAB_DEPENDED_ON_EDGE_CONST = 6
 
@@ -228,6 +234,12 @@ def get_review_requests(
             "date_created": review.dateCreated,
             "date_modified": review.dateModified,
             "status": review.reviewerStatus,
+            "last_action_diff_id": diff_phid_to_id(
+                review.lastActionDiffPHID, session_diff
+            ),
+            "last_comment_diff_id": diff_phid_to_id(
+                review.lastCommentDiffPHID, session_diff
+            ),
         }
 
         review_requests.append(review_obj)
