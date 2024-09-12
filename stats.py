@@ -314,17 +314,14 @@ def get_comments(
 ) -> list[dict]:
     comments = []
 
-    comment_transaction_phids = (
-        session_diff.query(DiffDb.Transaction)
-        .filter_by(objectPHID=revision.phid)
-        .filter_by(transactionType="core:comment")
+    comment_transaction_phids = session_diff.query(DiffDb.Transaction).filter_by(
+        objectPHID=revision.phid,
+        transactionType="core:comment",
     )
 
-    for comment in session_diff.query(DiffDb.TransactionComment).filter_by(
-        sqlalchemy.or_(
-            DiffDb.TransactionComment.revisionPHID == revision.phid,
-            DiffDb.TransactionComment.phid.in_(comment_transaction_phids),
-        )
+    for comment in session_diff.query(DiffDb.TransactionComment).filter(
+        (DiffDb.TransactionComment.revisionPHID == revision.phid)
+        | DiffDb.TransactionComment.phid.in_(comment_transaction_phids)
     ):
         att = json.loads(comment.attributes)
         is_suggestion = (
