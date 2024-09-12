@@ -198,14 +198,14 @@ def get_user_email(author_phid: str, session_users: Session) -> Optional[str]:
 
 
 def get_review_requests(
-    revision_phid: str,
+    revision: DiffDb.Revision,
     session_diff: Session,
     session_projects: Session,
     session_users: Session,
 ) -> list[dict]:
     review_requests = []
     for review in session_diff.query(DiffDb.Reviewer).filter_by(
-        revisionPHID=revision_phid
+        revisionPHID=revision.phid
     ):
         is_reviewer_group = review.reviewerPHID.startswith(b"PHID-PROJ-")
         if is_reviewer_group:
