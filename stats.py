@@ -306,7 +306,7 @@ def get_changesets(
             "changeset_id": changeset.id,
             "lines_added": changeset.addLines,
             "lines_removed": changeset.delLines,
-            "filename": changeset.filename,
+            "filename": changeset.filename.decode("utf-8"),
         }
 
         changesets.append(changeset_obj)
