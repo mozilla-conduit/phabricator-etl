@@ -314,7 +314,7 @@ def get_comments(
 ) -> list[dict]:
     comments = []
 
-    comment_transaction_phids = (
+    comment_transaction_phids_query = (
         session_diff.query(DiffDb.Transaction)
         .with_entities(DiffDb.Transaction.phid)
         .filter_by(
@@ -323,6 +323,8 @@ def get_comments(
         )
         .all()
     )
+
+    comment_transaction_phids = [row[0] for row in comment_transaction_phids_query]
 
     for comment in session_diff.query(DiffDb.TransactionComment).filter(
         (DiffDb.TransactionComment.revisionPHID == revision.phid)
