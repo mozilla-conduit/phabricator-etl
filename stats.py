@@ -404,7 +404,6 @@ def process():
     session_repo = Session(engines["repository"])
     session_diff = Session(engines["differential"])
 
-    # TODO doo we need to set environment variable to make this work/
     bq_client = bigquery.Client()
 
     time_queries = get_time_queries(now, bq_client)
