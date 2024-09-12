@@ -325,11 +325,11 @@ def get_changeset_comments(
 
 
 def get_comments(
-    revision_phid: str, session_diff: Session, session_users: Session
+    revision: DiffDb.Revision, session_diff: Session, session_users: Session
 ) -> list[dict]:
     comments = []
     for transaction in session_diff.query(DiffDb.Transaction).filter_by(
-        objectPHID=revision_phid,
+        objectPHID=revision.phid,
         transactionType="core:comment",
     ):
         comment = (
