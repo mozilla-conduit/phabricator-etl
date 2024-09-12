@@ -117,7 +117,10 @@ def get_target_repository(repository_phid: str, session_repo: Session) -> Option
     return repository.uri if repository else None
 
 
-def diff_phid_to_id(diff_phid: str, session_diff: Session) -> int:
+def diff_phid_to_id(diff_phid: Optional[str], session_diff: Session) -> Optional[int]:
+    if diff_phid is None:
+        return None
+
     diff = session_diff.query(DiffDb.Differential).filter_by(phid=diff_phid).one()
 
     return diff.id
