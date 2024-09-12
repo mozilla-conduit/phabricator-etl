@@ -123,6 +123,12 @@ def diff_phid_to_id(diff_phid: str, session_diff: Session) -> int:
     return diff.id
 
 
+def get_diff_id_for_changeset(changeset_id: int, session_diff: Session) -> int:
+    changeset = session_diff.query(DiffDb.Changeset).filter_by(id=changeset_id).one()
+
+    return changeset.diffID
+
+
 PHAB_DEPENDS_ON_EDGE_CONST = 5
 PHAB_DEPENDED_ON_EDGE_CONST = 6
 
@@ -344,6 +350,9 @@ def get_comments(
             and att["inline.state.initial"].get("hassuggestion") == "true"
         )
         comment_obj = {
+            "revision_id": revision.id,
+            "diff_id": get_diff_id_for_changeset(comment.changesetID, session_diff),
+            "changeset_id": comment.changesetID,
             "author_email": get_user_email(comment.authorPHID, session_users),
             "author_username": get_user_name(comment.authorPHID, session_users),
             "date_created": comment.dateCreated,
