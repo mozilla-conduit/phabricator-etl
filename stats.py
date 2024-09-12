@@ -313,16 +313,9 @@ def get_comments(
     revision: DiffDb.Revision, session_diff: Session, session_users: Session
 ) -> list[dict]:
     comments = []
-    for transaction in session_diff.query(DiffDb.Transaction).filter_by(
-        objectPHID=revision.phid,
-        transactionType="core:comment",
+    for comment in session_diff.query(DiffDb.TransactionComment).filter_by(
+        revisionPHID=revision.phid
     ):
-        comment = (
-            session_diff.query(DiffDb.TransactionComment)
-            .filter_by(phid=transaction.commentPHID)
-            .one()
-        )
-
         att = json.loads(comment.attributes)
         is_suggestion = (
             "inline.state.initial" in att
