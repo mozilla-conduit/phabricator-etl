@@ -313,8 +313,25 @@ def get_comments(
     revision: DiffDb.Revision, session_diff: Session, session_users: Session
 ) -> list[dict]:
     comments = []
-    for comment in session_diff.query(DiffDb.TransactionComment).filter_by(
-        revisionPHID=revision.phid
+
+    # Query comments that are left on revisions but not specific diffs/changesets.
+    comment_transaction_phids_query = (
+        session_diff.query(DiffDb.Transaction)
+        .with_entities(DiffDb.Transaction.commentPHID)
+        .filter_by(
+            objectPHID=revision.phid,
+            transactionType="core:comment",
+        )
+        .all()
+    )
+
+    comment_transaction_phids = [row[0] for row in comment_transaction_phids_query]
+
+    for comment in session_diff.query(DiffDb.TransactionComment).filter(
+        # Query all TransactionComments that match our revision PHID
+        # or the non-diff comments.
+        (DiffDb.TransactionComment.revisionPHID == revision.phid)
+        | (DiffDb.TransactionComment.phid.in_(comment_transaction_phids))
     ):
         att = json.loads(comment.attributes)
         is_suggestion = (
