@@ -313,8 +313,16 @@ def get_comments(
     revision: DiffDb.Revision, session_diff: Session, session_users: Session
 ) -> list[dict]:
     comments = []
+
+    comment_transaction_phids = session_diff.query(DiffDb.Transaction).filter_by(
+        objectPHID=revision.phid, transactionType="core:comment"
+    )
+
     for comment in session_diff.query(DiffDb.TransactionComment).filter_by(
-        revisionPHID=revision.phid
+        sqlalchemy.or_(
+            DiffDb.TransactionComment.revisionPHID == revision.phid,
+            DiffDb.TransactionComment.phid.in_(comment_transaction_phids),
+        )
     ):
         att = json.loads(comment.attributes)
         is_suggestion = (
