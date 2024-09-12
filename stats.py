@@ -316,7 +316,7 @@ def get_comments(
 
     comment_transaction_phids_query = (
         session_diff.query(DiffDb.Transaction)
-        .with_entities(DiffDb.Transaction.phid)
+        .with_entities(DiffDb.Transaction.commentPHID)
         .filter_by(
             objectPHID=revision.phid,
             transactionType="core:comment",
