@@ -15,6 +15,7 @@ from typing import Optional, Any
 
 import sqlalchemy
 from google.cloud import bigquery
+from more_itertools import chunked
 from sqlalchemy import desc, or_
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import NoResultFound
@@ -413,10 +414,14 @@ def submit_to_bigquery(bq_client: bigquery.Client, table_id: str, rows: list[dic
     if not rows:
         return
 
-    errors = bq_client.insert_rows_json(table_id, rows)
-    if errors:
-        logging.error(f"Encountered errors while inserting rows to BigQuery: {errors}.")
-        sys.exit(1)
+    # Insert rows 500 at a time to avoid `413 Payload Too Large` on large revisions.
+    for chunk in chunked(rows, 500):
+        errors = bq_client.insert_rows_json(table_id, chunk)
+        if errors:
+            logging.error(
+                f"Encountered errors while inserting rows to BigQuery: {errors}."
+            )
+            sys.exit(1)
 
 
 def process():
