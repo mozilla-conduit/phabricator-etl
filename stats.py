@@ -138,24 +138,34 @@ def get_diff_id_for_changeset(
     return changeset.diffID
 
 
-PHAB_DEPENDS_ON_EDGE_CONST = 5
-PHAB_DEPENDED_ON_EDGE_CONST = 6
-
-
-def get_stack_size(
-    revision: Any, all_revisions: Any, bug_id_query: Any, session_diff: Session
-) -> int:
-    stack = set()
-    neighbors = {revision.phid}
-
+def get_bug_id(revision: DiffDb.Revision, bug_id_query) -> Optional[int]:
     bug_id_query_result = bug_id_query.filter(
         DiffDb.CustomFieldStorage.objectPHID == revision.phid
     ).one_or_none()
 
     if not bug_id_query_result:
+        return None
+
+    return bug_id_query_result.fieldValue
+
+
+PHAB_DEPENDS_ON_EDGE_CONST = 5
+PHAB_DEPENDED_ON_EDGE_CONST = 6
+
+
+def get_stack_size(
+    revision: Any,
+    bug_id: Optional[int],
+    all_revisions: Any,
+    bug_id_query: Any,
+    session_diff: Session,
+) -> int:
+    # The stack size is always 1 for stacks without a bug ID.
+    if not bug_id:
         return 1
 
-    bug_id = bug_id_query_result.fieldValue
+    stack = set()
+    neighbors = {revision.phid}
 
     while neighbors:
         # Query for all edges related to the current set of neighbors.
@@ -179,14 +189,9 @@ def get_stack_size(
                 # Get the revision from the set of revisions.
                 for rev in all_revisions.filter_by(phid=node_phid):
                     # Get the bug ID for the neighbor.
-                    neighbor_bug_id_query_result = bug_id_query.filter(
-                        DiffDb.CustomFieldStorage.objectPHID == rev.phid
-                    ).one_or_none()
-
-                    if not neighbor_bug_id_query_result:
+                    neighbor_bug_id = get_bug_id(rev, bug_id_query)
+                    if not neighbor_bug_id:
                         continue
-
-                    neighbor_bug_id = neighbor_bug_id_query_result.fieldValue
 
                     if neighbor_bug_id == bug_id:
                         bug_matching_revlist.append(rev.phid)
@@ -452,7 +457,10 @@ def process():
     for revision in updated_revisions:
         logging.info(f"Processing revision D{revision.id}.")
 
+        bug_id = get_bug_id(revision, bug_id_query)
+
         revision_json = {
+            "bug_id": bug_id,
             "revision_id": revision.id,
             "date_created": revision.dateCreated,
             "date_modified": revision.dateModified,
@@ -462,7 +470,7 @@ def process():
                 revision.repositoryPHID, session_repo
             ),
             "stack_size": get_stack_size(
-                revision, all_revisions, bug_id_query, session_diff
+                revision, bug_id, all_revisions, bug_id_query, session_diff
             ),
         }
 
