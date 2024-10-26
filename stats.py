@@ -151,6 +151,33 @@ def get_bug_id(revision: DiffDb.Revision, bug_id_query) -> Optional[int]:
 
 PHAB_DEPENDS_ON_EDGE_CONST = 5
 PHAB_DEPENDED_ON_EDGE_CONST = 6
+PHAB_OBJECT_HAS_PROJECT_EDGE_CONST = 41
+
+
+def get_revision_projects(
+    revision: Any, session_diff: Session, projects_query: Any
+) -> list[str]:
+    """Return the project tags associated with a revision."""
+    # Get all edges between the revision and a project.
+    edge_query_result = (
+        session_diff.query(DiffDb.Edges)
+        .filter(
+            DiffDb.Edges.src == revision.phid,
+            DiffDb.Edges.type == PHAB_OBJECT_HAS_PROJECT_EDGE_CONST,
+        )
+        .all()
+    )
+
+    # Get the PHID of each project (the destination on the edge).
+    project_phids = {edge.dst for edge in edge_query_result}
+
+    # Convert the project PHID to the slug (name).
+    return [
+        project.slug
+        for project in projects_query.filter(
+            ProjectDb.Project.phid.in_(project_phids)
+        ).all()
+    ]
 
 
 def get_stack_size(
@@ -446,6 +473,8 @@ def process():
     updated_revisions = session_diff.query(DiffDb.Revision).filter(*time_queries)
     all_revisions = session_diff.query(DiffDb.Revision)
 
+    projects_query = session_diff.query(ProjectDb.Project)
+
     bug_id_query = session_diff.query(DiffDb.CustomFieldStorage).filter(
         # TODO I got this value from the DB, what is it?
         DiffDb.CustomFieldStorage.fieldIndex
@@ -471,6 +500,9 @@ def process():
             ),
             "stack_size": get_stack_size(
                 revision, bug_id, all_revisions, bug_id_query, session_diff
+            ),
+            "project_tags": get_revision_projects(
+                revision, session_diff, projects_query
             ),
         }
 
