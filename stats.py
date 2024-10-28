@@ -305,14 +305,18 @@ def get_diffs_changesets(
     revision: DiffDb.Revision,
     session_diff: Session,
     session_users: Session,
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], Optional[int]]:
     diffs = []
     changesets = []
+    date_landed = None
     for diff in session_diff.query(DiffDb.Differential).filter_by(
         revisionID=revision.id
     ):
         if diff.creationMethod == "commit":
-            # Ignore diffs that were created as a result of the commit landing.
+            # Set `date_landed` as the latest `commit` diff creation time.
+            if not date_landed or date_landed < diff.dateCreated:
+                date_landed = diff.dateCreated
+
             continue
 
         if diff.authorPHID.startswith(b"PHID-RIDT-"):
@@ -330,7 +334,7 @@ def get_diffs_changesets(
         diffs.append(diff_obj)
         changesets.extend(get_changesets(revision, diff, session_diff))
 
-    return diffs, changesets
+    return diffs, changesets, date_landed
 
 
 def get_changesets(
@@ -493,11 +497,18 @@ def process():
 
         bug_id = get_bug_id(revision, bug_id_query)
 
+        diffs, changesets, date_landed = get_diffs_changesets(
+            revision,
+            session_diff,
+            session_users,
+        )
+
         revision_json = {
             "bug_id": bug_id,
             "revision_id": revision.id,
             "date_created": revision.dateCreated,
             "date_modified": revision.dateModified,
+            "date_landed": date_landed,
             "last_review_id": get_last_review_id(revision.phid, session_diff),
             "current_status": revision.status,
             "target_repository": get_target_repository(
@@ -510,12 +521,6 @@ def process():
                 revision, session_diff, projects_query
             ),
         }
-
-        diffs, changesets = get_diffs_changesets(
-            revision,
-            session_diff,
-            session_users,
-        )
 
         review_requests = get_review_requests(
             revision, session_diff, session_projects, session_users
