@@ -262,8 +262,10 @@ def get_review_requests(
     session_diff: Session,
     session_projects: Session,
     session_users: Session,
-) -> list[dict]:
+) -> tuple[list[dict], Optional[int]]:
     review_requests = []
+    date_approved = None
+
     for review in session_diff.query(DiffDb.Reviewer).filter_by(
         revisionPHID=revision.phid
     ):
@@ -279,6 +281,12 @@ def get_review_requests(
         else:
             reviewer_username = get_user_name(review.reviewerPHID, session_users)
             reviewer_email = get_user_email(review.reviewerPHID, session_users)
+
+        # Set `date_approved` as the latest `accepted` review modified time.
+        if review.reviewerStatus == "accepted" and (
+            not date_approved or date_approved < review.dateModified
+        ):
+            date_approved = review.dateModified
 
         review_obj = {
             "revision_id": revision.id,
@@ -298,7 +306,7 @@ def get_review_requests(
 
         review_requests.append(review_obj)
 
-    return review_requests
+    return review_requests, date_approved
 
 
 def get_diffs_changesets(
@@ -503,9 +511,14 @@ def process():
             session_users,
         )
 
+        review_requests, date_approved = get_review_requests(
+            revision, session_diff, session_projects, session_users
+        )
+
         revision_json = {
             "bug_id": bug_id,
             "revision_id": revision.id,
+            "date_approved": date_approved,
             "date_created": revision.dateCreated,
             "date_modified": revision.dateModified,
             "date_landed": date_landed,
@@ -521,10 +534,6 @@ def process():
                 revision, session_diff, projects_query
             ),
         }
-
-        review_requests = get_review_requests(
-            revision, session_diff, session_projects, session_users
-        )
 
         comments = get_comments(revision, session_diff, session_users)
 
