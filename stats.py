@@ -410,19 +410,16 @@ def get_comments(
     return comments
 
 
-def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[int]:
+def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
     """Get the timestamp of the most recently added entry in BigQuery.
 
     See https://github.com/googleapis/python-bigquery/blob/main/samples/query_script.py
     for more.
     """
-    if DEBUG:
-        return None
+    most_recent_run_sql = (
+        f"SELECT MAX(date_modified) as last_run FROM `{BQ_REVISIONS_TABLE_ID}`"
+    )
 
-    # TODO write SQL to query the latest timestamp in BQ.
-    most_recent_run_sql = f"SELECT MAX(date_modified) FROM `{BQ_REVISIONS_TABLE_ID}`"
-
-    # TODO is this the correct way to query?
     parent_job = bq_client.query(most_recent_run_sql)
     rows = list(parent_job.result())
 
@@ -430,8 +427,8 @@ def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[int]:
         logging.error("Only one row should be returned by timestamp query.")
         sys.exit(1)
 
-    # TODO is this right?
-    return rows[0]
+    # The `last_run` field comes from the SQL query above.
+    return rows[0].last_run
 
 
 def get_time_queries(now: datetime, bq_client: bigquery.Client) -> list:
