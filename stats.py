@@ -11,6 +11,7 @@ import pprint
 import sys
 from dataclasses import dataclass
 from datetime import datetime
+from enum import IntEnum
 from typing import Optional, Any
 
 import sqlalchemy
@@ -149,9 +150,12 @@ def get_bug_id(revision: DiffDb.Revision, bug_id_query) -> Optional[int]:
     return bug_id_query_result.fieldValue
 
 
-PHAB_DEPENDS_ON_EDGE_CONST = 5
-PHAB_DEPENDED_ON_EDGE_CONST = 6
-PHAB_OBJECT_HAS_PROJECT_EDGE_CONST = 41
+class PhabricatorEdgeConstant(IntEnum):
+    """Enumeration of project edge constants."""
+
+    DEPENDS_ON = 5
+    DEPENDED_ON = 6
+    OBJECT_HAS_PROJECT = 41
 
 
 def get_revision_projects(
@@ -163,7 +167,7 @@ def get_revision_projects(
         session_diff.query(DiffDb.Edges)
         .filter(
             DiffDb.Edges.src == revision.phid,
-            DiffDb.Edges.type == PHAB_OBJECT_HAS_PROJECT_EDGE_CONST,
+            DiffDb.Edges.type == PhabricatorEdgeConstant.OBJECT_HAS_PROJECT.value,
         )
         .all()
     )
@@ -199,7 +203,10 @@ def get_stack_size(
             .filter(
                 or_(DiffDb.Edges.src.in_(neighbors), DiffDb.Edges.dst.in_(neighbors)),
                 DiffDb.Edges.type.in_(
-                    [PHAB_DEPENDS_ON_EDGE_CONST, PHAB_DEPENDED_ON_EDGE_CONST]
+                    [
+                        PhabricatorEdgeConstant.DEPENDS_ON.value,
+                        PhabricatorEdgeConstant.DEPENDED_ON.value,
+                    ]
                 ),
             )
             .all()
