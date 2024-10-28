@@ -171,13 +171,11 @@ def get_revision_projects(
     # Get the PHID of each project (the destination on the edge).
     project_phids = {edge.dst for edge in edge_query_result}
 
+    # Get the project objects for the set of PHIDs.
+    projects = projects_query.filter(ProjectDb.Project.phid.in_(project_phids)).all()
+
     # Convert the project PHID to the slug (name).
-    return [
-        project.slug
-        for project in projects_query.filter(
-            ProjectDb.Project.phid.in_(project_phids)
-        ).all()
-    ]
+    return [project.primarySlug for project in projects]
 
 
 def get_stack_size(
@@ -473,7 +471,7 @@ def process():
     updated_revisions = session_diff.query(DiffDb.Revision).filter(*time_queries)
     all_revisions = session_diff.query(DiffDb.Revision)
 
-    projects_query = session_diff.query(ProjectDb.Project)
+    projects_query = session_projects.query(ProjectDb.Project)
 
     bug_id_query = session_diff.query(DiffDb.CustomFieldStorage).filter(
         # TODO I got this value from the DB, what is it?
