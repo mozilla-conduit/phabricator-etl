@@ -515,7 +515,8 @@ def process():
         revision_json = {
             "bug_id": bug_id,
             "revision_id": revision.id,
-            "date_approved": date_approved,
+            # Set `date_approved` only when a landing has been detected.
+            "date_approved": date_approved if date_landed else None,
             "date_created": revision.dateCreated,
             "date_modified": revision.dateModified,
             "date_landed": date_landed,
