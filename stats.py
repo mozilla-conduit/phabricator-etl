@@ -16,7 +16,6 @@ from typing import Optional, Any
 
 import sqlalchemy
 from google.cloud import bigquery
-from more_itertools import chunked
 from sqlalchemy import desc, or_
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import NoResultFound
