@@ -433,6 +433,25 @@ def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
     return rows[0].last_run
 
 
+def load_table_schema(bq_client: bigquery.Client, table_id: str) -> dict[str, str]:
+    """Load a mapping of `field` -> `bigquery type` for the given table."""
+    table = bq_client.get_table(table_id)
+    return {field.name: field.field_type for field in table.schema}
+
+
+def load_table_schemas(bq_client: bigquery.Client) -> dict[str, dict[str, str]]:
+    """Return a mapping of each table ID to the table field->type schema."""
+    return {
+        BQ_REVISIONS_TABLE_ID: load_table_schema(bq_client, BQ_REVISIONS_TABLE_ID),
+        BQ_DIFFS_TABLE_ID: load_table_schema(bq_client, BQ_DIFFS_TABLE_ID),
+        BQ_CHANGESETS_TABLE_ID: load_table_schema(bq_client, BQ_CHANGESETS_TABLE_ID),
+        BQ_COMMENTS_TABLE_ID: load_table_schema(bq_client, BQ_COMMENTS_TABLE_ID),
+        BQ_REVIEW_REQUESTS_TABLE_ID: load_table_schema(
+            bq_client, BQ_REVIEW_REQUESTS_TABLE_ID
+        ),
+    }
+
+
 def get_time_queries(now: datetime, bq_client: bigquery.Client) -> list:
     """
     Dont take the revisions created or modified after the start of the run
@@ -458,18 +477,63 @@ def get_time_queries(now: datetime, bq_client: bigquery.Client) -> list:
     return queries
 
 
-def submit_to_bigquery(bq_client: bigquery.Client, table_id: str, rows: list[dict]):
+def merge_into_bigquery(
+    bq_client: bigquery.Client,
+    table_id: str,
+    id_column: str,
+    table_schema_mapping: dict[str, str],
+    row: dict[str, Any],
+):
+    """Use a `MERGE` statement to upsert rows into BigQuery.
+
+    Perform a `MERGE` statement to detect if an entry in the table has the matching ID.
+    If there is a matching ID, update the existing entry with the new data.
+    If there is no matching ID, insert a new row.
+    """
+    merge_query = f"""
+        MERGE `{table_id}` T
+        USING (SELECT @id AS id) S
+        ON T.{id_column} = S.id
+        WHEN MATCHED THEN
+          UPDATE SET {", ".join(f"{key} = @param_{key}" for key in row.keys())}
+        WHEN NOT MATCHED THEN
+          INSERT ({", ".join(row.keys())})
+          VALUES ({", ".join(f"@param_{key}" for key in row.keys())});
+    """
+
+    query_parameters = [
+        bigquery.ScalarQueryParameter(
+            "id", table_schema_mapping[id_column], row[id_column]
+        )
+    ] + [
+        bigquery.ScalarQueryParameter(f"param_{key}", table_schema_mapping[key], value)
+        for key, value in row.items()
+    ]
+
+    job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
+
+    merge_job = bq_client.query(merge_query, job_config=job_config)
+    merge_job.result()
+
+
+def submit_to_bigquery(
+    bq_client: bigquery.Client,
+    table_schema_mappings: dict[str, dict[str, str]],
+    table_id: str,
+    id_column: str,
+    rows: list[dict],
+):
     if not rows:
         return
 
-    # Insert rows 500 at a time to avoid `413 Payload Too Large` on large revisions.
-    for chunk in chunked(rows, 500):
-        errors = bq_client.insert_rows_json(table_id, chunk)
-        if errors:
-            logging.error(
-                f"Encountered errors while inserting rows to BigQuery: {errors}."
-            )
-            sys.exit(1)
+    for row in rows:
+        merge_into_bigquery(
+            bq_client,
+            table_id,
+            id_column,
+            table_schema_mappings[table_id],
+            row,
+        )
 
 
 def process():
@@ -483,6 +547,8 @@ def process():
     session_diff = Session(engines["differential"])
 
     bq_client = bigquery.Client()
+
+    table_schemas = load_table_schemas(bq_client)
 
     time_queries = get_time_queries(now, bq_client)
 
@@ -542,11 +608,37 @@ def process():
             continue
 
         # Send data to BigQuery.
-        submit_to_bigquery(bq_client, BQ_REVISIONS_TABLE_ID, [revision_json])
-        submit_to_bigquery(bq_client, BQ_DIFFS_TABLE_ID, diffs)
-        submit_to_bigquery(bq_client, BQ_CHANGESETS_TABLE_ID, changesets)
-        submit_to_bigquery(bq_client, BQ_REVIEW_REQUESTS_TABLE_ID, review_requests)
-        submit_to_bigquery(bq_client, BQ_COMMENTS_TABLE_ID, comments)
+        submit_to_bigquery(
+            bq_client,
+            table_schemas,
+            BQ_REVISIONS_TABLE_ID,
+            "revision_id",
+            [revision_json],
+        )
+        submit_to_bigquery(
+            bq_client, table_schemas, BQ_DIFFS_TABLE_ID, "diff_id", diffs
+        )
+        submit_to_bigquery(
+            bq_client,
+            table_schemas,
+            BQ_CHANGESETS_TABLE_ID,
+            "changeset_id",
+            changesets,
+        )
+        submit_to_bigquery(
+            bq_client,
+            table_schemas,
+            BQ_REVIEW_REQUESTS_TABLE_ID,
+            "review_id",
+            review_requests,
+        )
+        submit_to_bigquery(
+            bq_client,
+            table_schemas,
+            BQ_COMMENTS_TABLE_ID,
+            "comment_id",
+            comments,
+        )
 
         logging.info(f"Submitted revision D{revision.id} in BigQuery.")
 
