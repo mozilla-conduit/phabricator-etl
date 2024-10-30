@@ -290,6 +290,7 @@ def get_review_requests(
 
         review_obj = {
             "revision_id": revision.id,
+            "review_id": review.id,
             "reviewer_username": reviewer_username,
             "reviewer_email": reviewer_email,
             "is_group": is_reviewer_group,
@@ -398,6 +399,7 @@ def get_comments(
             "revision_id": revision.id,
             "diff_id": get_diff_id_for_changeset(comment.changesetID, session_diff),
             "changeset_id": comment.changesetID,
+            "comment_id": comment.id,
             "author_email": get_user_email(comment.authorPHID, session_users),
             "author_username": get_user_name(comment.authorPHID, session_users),
             "date_created": comment.dateCreated,
