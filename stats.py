@@ -435,14 +435,7 @@ def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
 def load_table_schema(bq_client: bigquery.Client, table_id: str) -> dict[str, str]:
     """Load a mapping of `field` -> `bigquery type` for the given table."""
     table = bq_client.get_table(table_id)
-    return {
-        field.name: (
-            field.field_type
-            if field.mode != "REPEATED"
-            else f"ARRAY<{field.field_type}>"
-        )
-        for field in table.schema
-    }
+    return {field.name: field.field_type for field in table.schema}
 
 
 def load_table_schemas(bq_client: bigquery.Client) -> dict[str, dict[str, str]]:
