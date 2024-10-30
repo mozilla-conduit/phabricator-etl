@@ -506,7 +506,7 @@ def merge_into_bigquery(
 
     query_parameters = [
         bigquery.ScalarQueryParameter(
-            "id", table_schema_mapping[id_column], row[id_column]
+            "id", table_schema_mapping[id_column].field_type, row[id_column]
         )
     ] + [
         (
