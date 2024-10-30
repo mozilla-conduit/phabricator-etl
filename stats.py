@@ -434,7 +434,7 @@ def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
 
 def load_table_schema(
     bq_client: bigquery.Client, table_id: str
-) -> dict[str, bigquery.TableFieldSchema]:
+) -> dict[str, bigquery.SchemaField]:
     """Load a mapping of `field` -> `bigquery type` for the given table."""
     table = bq_client.get_table(table_id)
     return {field.name: field for field in table.schema}
@@ -442,7 +442,7 @@ def load_table_schema(
 
 def load_table_schemas(
     bq_client: bigquery.Client,
-) -> dict[str, dict[str, bigquery.TableFieldSchema]]:
+) -> dict[str, dict[str, bigquery.SchemaField]]:
     """Return a mapping of each table ID to the table field->type schema."""
     return {
         BQ_REVISIONS_TABLE_ID: load_table_schema(bq_client, BQ_REVISIONS_TABLE_ID),
@@ -484,7 +484,7 @@ def merge_into_bigquery(
     bq_client: bigquery.Client,
     table_id: str,
     id_column: str,
-    table_schema_mapping: dict[str, bigquery.TableFieldSchema],
+    table_schema_mapping: dict[str, bigquery.SchemaField],
     row: dict[str, Any],
 ):
     """Use a `MERGE` statement to upsert rows into BigQuery.
@@ -530,7 +530,7 @@ def merge_into_bigquery(
 
 def submit_to_bigquery(
     bq_client: bigquery.Client,
-    table_schema_mappings: dict[str, dict[str, bigquery.TableFieldSchema]],
+    table_schema_mappings: dict[str, dict[str, bigquery.SchemaField]],
     table_id: str,
     id_column: str,
     rows: list[dict],
