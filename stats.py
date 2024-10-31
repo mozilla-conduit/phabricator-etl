@@ -307,7 +307,10 @@ def get_review_requests(
 
         review_requests.append(review_obj)
 
-    return review_requests, datetime.fromtimestamp(date_approved)
+    if date_approved:
+        date_approved = datetime.fromtimestamp(date_approved)
+
+    return review_requests, date_approved
 
 
 def get_diffs_changesets(
@@ -343,7 +346,10 @@ def get_diffs_changesets(
         diffs.append(diff_obj)
         changesets.extend(get_changesets(revision, diff, session_diff))
 
-    return diffs, changesets, datetime.fromtimestamp(date_landed)
+    if date_landed:
+        date_landed = datetime.fromtimestamp(date_landed)
+
+    return diffs, changesets, date_landed
 
 
 def get_changesets(
