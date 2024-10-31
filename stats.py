@@ -487,6 +487,18 @@ def get_time_queries(now: datetime, bq_client: bigquery.Client) -> list:
     return queries
 
 
+BIGQUERY_TYPE_MAPPING = {
+    "STRING": "STRING",
+    "INTEGER": "INT64",
+    "FLOAT": "FLOAT64",
+    "BOOLEAN": "BOOL",
+    "TIMESTAMP": "TIMESTAMP",
+    "DATE": "DATE",
+    "DATETIME": "DATETIME",
+    "TIME": "TIME",
+}
+
+
 def merge_into_bigquery(
     bq_client: bigquery.Client,
     table_id: str,
@@ -513,12 +525,16 @@ def merge_into_bigquery(
 
     query_parameters = [
         bigquery.ScalarQueryParameter(
-            "id", table_schema_mapping[id_column].field_type, row[id_column]
+            "id",
+            BIGQUERY_TYPE_MAPPING[table_schema_mapping[id_column].field_type],
+            row[id_column],
         )
     ] + [
         (
             bigquery.ScalarQueryParameter(
-                f"param_{key}", table_schema_mapping[key].field_type, field
+                f"param_{key}",
+                BIGQUERY_TYPE_MAPPING[table_schema_mapping[key].field_type],
+                field,
             )
             if table_schema_mapping[key].mode != "REPEATED"
             # Use the `ArrayQueryParameter` for `REPEATED` mode fields.
