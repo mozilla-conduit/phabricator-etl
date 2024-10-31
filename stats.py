@@ -9,6 +9,7 @@ import logging
 import os
 import pprint
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import IntEnum
@@ -580,6 +581,8 @@ def process():
     for revision in updated_revisions:
         logging.info(f"Processing revision D{revision.id}.")
 
+        phab_querying_start = time.perf_counter()
+
         bug_id = get_bug_id(revision, bug_id_query)
 
         diffs, changesets, date_landed = get_diffs_changesets(
@@ -615,9 +618,18 @@ def process():
 
         comments = get_comments(revision, session_diff, session_users)
 
+        phab_gathering_time = round(
+            time.perf_counter() - phab_querying_start, ndigits=2
+        )
+        logging.info(
+            f"Gathered relevant info for D{revision.id} in {phab_gathering_time}s."
+        )
+
         if DEBUG:
             pprint.pprint(revision_json)
             continue
+
+        bigquery_insert_start = time.perf_counter()
 
         # Send data to BigQuery.
         submit_to_bigquery(
@@ -652,7 +664,12 @@ def process():
             comments,
         )
 
-        logging.info(f"Submitted revision D{revision.id} in BigQuery.")
+        bigquery_insert_time = round(
+            time.perf_counter() - bigquery_insert_start, ndigits=2
+        )
+        logging.info(
+            f"Submitted revision D{revision.id} in BigQuery in {bigquery_insert_time}s."
+        )
 
 
 if __name__ == "__main__":
