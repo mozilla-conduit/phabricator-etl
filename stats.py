@@ -148,7 +148,7 @@ def get_bug_id(revision: DiffDb.Revision, bug_id_query) -> Optional[int]:
     if not bug_id_query_result:
         return None
 
-    return bug_id_query_result.fieldValue
+    return bug_id_query_result.fieldValue or None
 
 
 class PhabricatorEdgeConstant(IntEnum):
