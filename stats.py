@@ -489,18 +489,6 @@ def get_time_queries(now: datetime, bq_client: bigquery.Client) -> list:
     return queries
 
 
-BIGQUERY_TYPE_MAPPING = {
-    "STRING": "STRING",
-    "INTEGER": "INT64",
-    "FLOAT": "FLOAT64",
-    "BOOLEAN": "BOOL",
-    "TIMESTAMP": "TIMESTAMP",
-    "DATE": "DATE",
-    "DATETIME": "DATETIME",
-    "TIME": "TIME",
-}
-
-
 def staging_table_id(table_id: str) -> str:
     """Return a staging table ID for the given table ID."""
     return f"{table_id}_staging"
