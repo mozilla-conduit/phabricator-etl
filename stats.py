@@ -295,8 +295,8 @@ def get_review_requests(
             "reviewer_username": reviewer_username,
             "reviewer_email": reviewer_email,
             "is_group": is_reviewer_group,
-            "date_created": datetime.fromtimestamp(review.dateCreated),
-            "date_modified": datetime.fromtimestamp(review.dateModified),
+            "date_created": review.dateCreated,
+            "date_modified": review.dateModified,
             "status": review.reviewerStatus,
             "last_action_diff_id": diff_phid_to_id(
                 review.lastActionDiffPHID, session_diff
@@ -307,9 +307,6 @@ def get_review_requests(
         }
 
         review_requests.append(review_obj)
-
-    if date_approved:
-        date_approved = datetime.fromtimestamp(date_approved)
 
     return review_requests, date_approved
 
@@ -339,16 +336,13 @@ def get_diffs_changesets(
         diff_obj = {
             "diff_id": diff.id,
             "revision_id": revision.id,
-            "date_created": datetime.fromtimestamp(diff.dateCreated),
+            "date_created": diff.dateCreated,
             "author_email": get_user_email(diff.authorPHID, session_users),
             "author_username": get_user_name(diff.authorPHID, session_users),
         }
 
         diffs.append(diff_obj)
         changesets.extend(get_changesets(revision, diff, session_diff))
-
-    if date_landed:
-        date_landed = datetime.fromtimestamp(date_landed)
 
     return diffs, changesets, date_landed
 
@@ -409,7 +403,7 @@ def get_comments(
             "comment_id": comment.id,
             "author_email": get_user_email(comment.authorPHID, session_users),
             "author_username": get_user_name(comment.authorPHID, session_users),
-            "date_created": datetime.fromtimestamp(comment.dateCreated),
+            "date_created": comment.dateCreated,
             "character_count": len(comment.content),
             "is_suggestion": is_suggestion,
         }
@@ -630,8 +624,8 @@ def process():
             "revision_id": revision.id,
             # Set `date_approved` only when a landing has been detected.
             "date_approved": date_approved if date_landed else None,
-            "date_created": datetime.fromtimestamp(revision.dateCreated),
-            "date_modified": datetime.fromtimestamp(revision.dateModified),
+            "date_created": revision.dateCreated,
+            "date_modified": revision.dateModified,
             "date_landed": date_landed,
             "last_review_id": get_last_review_id(revision.phid, session_diff),
             "current_status": revision.status,
