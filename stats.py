@@ -462,8 +462,8 @@ def create_staging_tables(
     staging table.
     """
     return {
-        table.table_ref.table_id: bq_client.create_table(
-            staging_table_id(table.table_ref.table_id),
+        table.table_id: bq_client.create_table(
+            staging_table_id(table.table_id),
             schema=table.schema,
             exists_ok=True,
         )
@@ -561,11 +561,11 @@ def submit_to_bigquery(
 
     # Insert rows into staging table.
     for chunk in chunked(rows, 500):
-        errors = bq_client.insert_rows_json(table.table_ref.table_id, chunk)
+        errors = bq_client.insert_rows_json(table.table_id, chunk)
         if errors:
             logging.error(
                 "Encountered errors while inserting rows to "
-                f"{table.table_ref.table_id}: {errors}."
+                f"{table.table_id}: {errors}."
             )
             sys.exit(1)
 
@@ -679,7 +679,7 @@ def process():
         (BQ_REVIEW_REQUESTS_TABLE_ID, "review_id"),
         (BQ_COMMENTS_TABLE_ID, "comment_id"),
     ):
-        staging_table_id = staging_tables[target_table_id].table_ref.table_id
+        staging_table_id = staging_tables[target_table_id].table_id
         merge_into_bigquery(
             bq_client,
             target_table_id,
