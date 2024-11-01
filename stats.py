@@ -440,26 +440,34 @@ def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
     return rows[0].last_run
 
 
-def load_table_schema(
-    bq_client: bigquery.Client, table_id: str
-) -> dict[str, bigquery.SchemaField]:
-    """Load a mapping of `field` -> `bigquery type` for the given table."""
-    table = bq_client.get_table(table_id)
-    return {field.name: field for field in table.schema}
-
-
-def load_table_schemas(
+def load_bigquery_tables(
     bq_client: bigquery.Client,
-) -> dict[str, dict[str, bigquery.SchemaField]]:
+) -> dict[str, bigquery.Table]:
     """Return a mapping of each table ID to the table field->type schema."""
     return {
-        BQ_REVISIONS_TABLE_ID: load_table_schema(bq_client, BQ_REVISIONS_TABLE_ID),
-        BQ_DIFFS_TABLE_ID: load_table_schema(bq_client, BQ_DIFFS_TABLE_ID),
-        BQ_CHANGESETS_TABLE_ID: load_table_schema(bq_client, BQ_CHANGESETS_TABLE_ID),
-        BQ_COMMENTS_TABLE_ID: load_table_schema(bq_client, BQ_COMMENTS_TABLE_ID),
-        BQ_REVIEW_REQUESTS_TABLE_ID: load_table_schema(
-            bq_client, BQ_REVIEW_REQUESTS_TABLE_ID
-        ),
+        BQ_REVISIONS_TABLE_ID: bq_client.get_table(BQ_REVISIONS_TABLE_ID),
+        BQ_DIFFS_TABLE_ID: bq_client.get_table(BQ_DIFFS_TABLE_ID),
+        BQ_CHANGESETS_TABLE_ID: bq_client.get_table(BQ_CHANGESETS_TABLE_ID),
+        BQ_COMMENTS_TABLE_ID: bq_client.get_table(BQ_COMMENTS_TABLE_ID),
+        BQ_REVIEW_REQUESTS_TABLE_ID: bq_client.get_table(BQ_REVIEW_REQUESTS_TABLE_ID),
+    }
+
+
+def create_staging_tables(
+    bq_client: bigquery.Client, tables: dict[str, bigquery.Table]
+) -> dict[str, bigquery.Table]:
+    """Create the staging tables for data insertion.
+
+    Returns a mapping of the target table ID to the `Table` object for the
+    staging table.
+    """
+    return {
+        table.table_ref.table_id: bq_client.create_table(
+            staging_table_id(table.table_ref.table_id),
+            schema=table.schema,
+            exists_ok=True,
+        )
+        for table in tables.values()
     }
 
 
@@ -500,12 +508,17 @@ BIGQUERY_TYPE_MAPPING = {
 }
 
 
+def staging_table_id(table_id: str) -> str:
+    """Return a staging table ID for the given table ID."""
+    return f"{table_id}_staging"
+
+
 def merge_into_bigquery(
     bq_client: bigquery.Client,
     table_id: str,
+    staging_table_id: str,
     id_column: str,
-    table_schema_mapping: dict[str, bigquery.SchemaField],
-    row: dict[str, Any],
+    bq_tables: dict[str, bigquery.Table],
 ):
     """Use a `MERGE` statement to upsert rows into BigQuery.
 
@@ -513,63 +526,48 @@ def merge_into_bigquery(
     If there is a matching ID, update the existing entry with the new data.
     If there is no matching ID, insert a new row.
     """
+    target_table = bq_tables[table_id]
+
     merge_query = f"""
-        MERGE `{table_id}` T
-        USING (SELECT @id AS id) S
-        ON T.{id_column} = S.id
+        MERGE `{table_id}` as T
+        USING `{staging_table_id}` as S
+        ON T.{id_column} = S.{id_column}
         WHEN MATCHED THEN
-          UPDATE SET {", ".join(f"{key} = @param_{key}" for key in row.keys())}
+          UPDATE SET {", ".join(f"{field.name} = S.{field.name}" for field in target_table.schema)}
         WHEN NOT MATCHED THEN
-          INSERT ({", ".join(row.keys())})
-          VALUES ({", ".join(f"@param_{key}" for key in row.keys())});
+          INSERT ({", ".join(field.name for field in target_table.schema)})
+          VALUES ({", ".join(f"S.{field.name}" for field in target_table.schema)});
     """
 
-    query_parameters = [
-        bigquery.ScalarQueryParameter(
-            "id",
-            BIGQUERY_TYPE_MAPPING[table_schema_mapping[id_column].field_type],
-            row[id_column],
-        )
-    ] + [
-        (
-            bigquery.ScalarQueryParameter(
-                f"param_{key}",
-                BIGQUERY_TYPE_MAPPING[table_schema_mapping[key].field_type],
-                field,
-            )
-            if table_schema_mapping[key].mode != "REPEATED"
-            # Use the `ArrayQueryParameter` for `REPEATED` mode fields.
-            else bigquery.ArrayQueryParameter(
-                f"param_{key}", table_schema_mapping[key].field_type, field
-            )
-        )
-        for key, field in row.items()
-    ]
-
-    job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
-
-    merge_job = bq_client.query(merge_query, job_config=job_config)
+    merge_job = bq_client.query(merge_query)
     merge_job.result()
+
+    logging.info(f"Merged staging table for {table_id}.")
+
+
+def delete_staging_table(bq_client: bigquery.Client, table_id: str):
+    """Delete the table with given ID."""
+    bq_client.delete_table(table_id)
+    logging.info(f"Deleted table {table_id}.")
 
 
 def submit_to_bigquery(
     bq_client: bigquery.Client,
-    table_schema_mappings: dict[str, dict[str, bigquery.SchemaField]],
-    table_id: str,
-    id_column: str,
+    table: bigquery.Table,
     rows: list[dict],
 ):
     if not rows:
         return
 
-    for row in rows:
-        merge_into_bigquery(
-            bq_client,
-            table_id,
-            id_column,
-            table_schema_mappings[table_id],
-            row,
-        )
+    # Insert rows into staging table.
+    for chunk in chunked(rows, 500):
+        errors = bq_client.insert_rows_json(table.table_ref.table_id, chunk)
+        if errors:
+            logging.error(
+                "Encountered errors while inserting rows to "
+                f"{table.table_ref.table_id}: {errors}."
+            )
+            sys.exit(1)
 
 
 def process():
@@ -584,7 +582,8 @@ def process():
 
     bq_client = bigquery.Client()
 
-    table_schemas = load_table_schemas(bq_client)
+    target_tables = load_bigquery_tables(bq_client)
+    staging_tables = create_staging_tables(bq_client, target_tables)
 
     time_queries = get_time_queries(now, bq_client)
 
@@ -654,45 +653,42 @@ def process():
 
         bigquery_insert_start = time.perf_counter()
 
-        # Send data to BigQuery.
-        submit_to_bigquery(
-            bq_client,
-            table_schemas,
-            BQ_REVISIONS_TABLE_ID,
-            "revision_id",
-            [revision_json],
-        )
-        submit_to_bigquery(
-            bq_client, table_schemas, BQ_DIFFS_TABLE_ID, "diff_id", diffs
-        )
-        submit_to_bigquery(
-            bq_client,
-            table_schemas,
-            BQ_CHANGESETS_TABLE_ID,
-            "changeset_id",
-            changesets,
-        )
-        submit_to_bigquery(
-            bq_client,
-            table_schemas,
-            BQ_REVIEW_REQUESTS_TABLE_ID,
-            "review_id",
-            review_requests,
-        )
-        submit_to_bigquery(
-            bq_client,
-            table_schemas,
-            BQ_COMMENTS_TABLE_ID,
-            "comment_id",
-            comments,
-        )
+        # Send data to BigQuery staging tables.
+        for target_table_id, data in (
+            (BQ_REVISIONS_TABLE_ID, [revision_json]),
+            (BQ_DIFFS_TABLE_ID, diffs),
+            (BQ_CHANGESETS_TABLE_ID, changesets),
+            (BQ_REVIEW_REQUESTS_TABLE_ID, review_requests),
+            (BQ_COMMENTS_TABLE_ID, comments),
+        ):
+            submit_to_bigquery(bq_client, staging_tables[target_table_id], data)
 
         bigquery_insert_time = round(
             time.perf_counter() - bigquery_insert_start, ndigits=2
         )
         logging.info(
-            f"Submitted revision D{revision.id} in BigQuery in {bigquery_insert_time}s."
+            f"Submitted revision D{revision.id} in BigQuery staging "
+            f"in {bigquery_insert_time}s."
         )
+
+    # Merge staging table changes into target tables.
+    for target_table_id, id_column in (
+        (BQ_REVISIONS_TABLE_ID, "revision_id"),
+        (BQ_DIFFS_TABLE_ID, "diff_id"),
+        (BQ_CHANGESETS_TABLE_ID, "changeset_id"),
+        (BQ_REVIEW_REQUESTS_TABLE_ID, "review_id"),
+        (BQ_COMMENTS_TABLE_ID, "comment_id"),
+    ):
+        staging_table_id = staging_tables[target_table_id].table_ref.table_id
+        merge_into_bigquery(
+            bq_client,
+            target_table_id,
+            staging_table_id,
+            id_column,
+            target_tables,
+        )
+
+        delete_staging_table(bq_client, staging_table_id)
 
 
 if __name__ == "__main__":
