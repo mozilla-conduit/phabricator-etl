@@ -463,8 +463,7 @@ def create_staging_tables(
     """
     return {
         table.table_id: bq_client.create_table(
-            staging_table_id(table.table_id),
-            schema=table.schema,
+            bigquery.Table(staging_table_id(table.table_id), schema=table.schema),
             exists_ok=True,
         )
         for table in tables.values()
