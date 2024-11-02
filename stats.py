@@ -73,6 +73,15 @@ engines = create_engines()
 bases = prepare_bases(engines)
 
 
+class Sessions:
+    """Container for all required Phabricator DB sessions."""
+
+    users = Session(engines["user"])
+    projects = Session(engines["project"])
+    repo = Session(engines["repository"])
+    diff = Session(engines["differential"])
+
+
 @dataclass
 class UserDb:
     User = bases["user"].classes.user
@@ -101,9 +110,9 @@ class DiffDb:
     CustomFieldStorage = bases["differential"].classes.differential_customfieldstorage
 
 
-def get_last_review_id(revision_phid: str, session_diff: Session) -> Optional[int]:
+def get_last_review_id(revision_phid: str, sessions: Sessions) -> Optional[int]:
     last_review = (
-        session_diff.query(DiffDb.Reviewer)
+        sessions.diff.query(DiffDb.Reviewer)
         .filter_by(revisionPHID=revision_phid)
         .order_by(desc("dateModified"))
         .first()
@@ -111,31 +120,31 @@ def get_last_review_id(revision_phid: str, session_diff: Session) -> Optional[in
     return last_review.id if last_review else None
 
 
-def get_target_repository(repository_phid: str, session_repo: Session) -> Optional[str]:
+def get_target_repository(repository_phid: str, sessions: Sessions) -> Optional[str]:
     repository = (
-        session_repo.query(RepoDb.Repository)
+        sessions.repo.query(RepoDb.Repository)
         .filter_by(repositoryPHID=repository_phid)
         .first()
     )
     return repository.uri if repository else None
 
 
-def diff_phid_to_id(diff_phid: Optional[str], session_diff: Session) -> Optional[int]:
+def diff_phid_to_id(diff_phid: Optional[str], sessions: Sessions) -> Optional[int]:
     if diff_phid is None:
         return None
 
-    diff = session_diff.query(DiffDb.Differential).filter_by(phid=diff_phid).one()
+    diff = sessions.diff.query(DiffDb.Differential).filter_by(phid=diff_phid).one()
 
     return diff.id
 
 
 def get_diff_id_for_changeset(
-    changeset_id: Optional[int], session_diff: Session
+    changeset_id: Optional[int], sessions: Sessions
 ) -> Optional[int]:
     if changeset_id is None:
         return None
 
-    changeset = session_diff.query(DiffDb.Changeset).filter_by(id=changeset_id).one()
+    changeset = sessions.diff.query(DiffDb.Changeset).filter_by(id=changeset_id).one()
 
     return changeset.diffID
 
@@ -160,12 +169,12 @@ class PhabricatorEdgeConstant(IntEnum):
 
 
 def get_revision_projects(
-    revision: Any, session_diff: Session, projects_query: Any
+    revision: Any, sessions: Sessions, projects_query: Any
 ) -> list[str]:
     """Return the project tags associated with a revision."""
     # Get all edges between the revision and a project.
     edge_query_result = (
-        session_diff.query(DiffDb.Edges)
+        sessions.diff.query(DiffDb.Edges)
         .filter(
             DiffDb.Edges.src == revision.phid,
             DiffDb.Edges.type == PhabricatorEdgeConstant.OBJECT_HAS_PROJECT.value,
@@ -188,7 +197,7 @@ def get_stack_size(
     bug_id: Optional[int],
     all_revisions: Any,
     bug_id_query: Any,
-    session_diff: Session,
+    sessions: Sessions,
 ) -> int:
     # The stack size is always 1 for stacks without a bug ID.
     if not bug_id:
@@ -200,7 +209,7 @@ def get_stack_size(
     while neighbors:
         # Query for all edges related to the current set of neighbors.
         edge_query_result = (
-            session_diff.query(DiffDb.Edges)
+            sessions.diff.query(DiffDb.Edges)
             .filter(
                 or_(DiffDb.Edges.src.in_(neighbors), DiffDb.Edges.dst.in_(neighbors)),
                 DiffDb.Edges.type.in_(
@@ -238,18 +247,18 @@ def get_stack_size(
     return len(stack)
 
 
-def get_user_name(author_phid: str, session_users: Session) -> Optional[str]:
+def get_user_name(author_phid: str, sessions: Sessions) -> Optional[str]:
     try:
-        user = session_users.query(UserDb.User).filter_by(phid=author_phid).one()
+        user = sessions.users.query(UserDb.User).filter_by(phid=author_phid).one()
         return user.userName
     except NoResultFound:
         return None
 
 
-def get_user_email(author_phid: str, session_users: Session) -> Optional[str]:
+def get_user_email(author_phid: str, sessions: Sessions) -> Optional[str]:
     try:
         user_email = (
-            session_users.query(UserDb.UserEmail)
+            sessions.users.query(UserDb.UserEmail)
             .filter_by(userPHID=author_phid, isPrimary=1)
             .one()
         )
@@ -260,28 +269,26 @@ def get_user_email(author_phid: str, session_users: Session) -> Optional[str]:
 
 def get_review_requests(
     revision: DiffDb.Revision,
-    session_diff: Session,
-    session_projects: Session,
-    session_users: Session,
+    sessions: Sessions,
 ) -> tuple[list[dict], Optional[int]]:
     review_requests = []
     date_approved = None
 
-    for review in session_diff.query(DiffDb.Reviewer).filter_by(
+    for review in sessions.diff.query(DiffDb.Reviewer).filter_by(
         revisionPHID=revision.phid
     ):
         is_reviewer_group = review.reviewerPHID.startswith(b"PHID-PROJ-")
         if is_reviewer_group:
             reviewer = (
-                session_projects.query(ProjectDb.Project)
+                sessions.projects.query(ProjectDb.Project)
                 .filter_by(phid=review.reviewerPHID)
                 .one()
             )
             reviewer_username = reviewer.name
             reviewer_email = None
         else:
-            reviewer_username = get_user_name(review.reviewerPHID, session_users)
-            reviewer_email = get_user_email(review.reviewerPHID, session_users)
+            reviewer_username = get_user_name(review.reviewerPHID, sessions)
+            reviewer_email = get_user_email(review.reviewerPHID, sessions)
 
         # Set `date_approved` as the latest `accepted` review modified time.
         if review.reviewerStatus == "accepted" and (
@@ -298,11 +305,9 @@ def get_review_requests(
             "date_created": review.dateCreated,
             "date_modified": review.dateModified,
             "status": review.reviewerStatus,
-            "last_action_diff_id": diff_phid_to_id(
-                review.lastActionDiffPHID, session_diff
-            ),
+            "last_action_diff_id": diff_phid_to_id(review.lastActionDiffPHID, sessions),
             "last_comment_diff_id": diff_phid_to_id(
-                review.lastCommentDiffPHID, session_diff
+                review.lastCommentDiffPHID, sessions
             ),
         }
 
@@ -313,13 +318,12 @@ def get_review_requests(
 
 def get_diffs_changesets(
     revision: DiffDb.Revision,
-    session_diff: Session,
-    session_users: Session,
+    sessions: Sessions,
 ) -> tuple[list[dict], list[dict], Optional[int]]:
     diffs = []
     changesets = []
     date_landed = None
-    for diff in session_diff.query(DiffDb.Differential).filter_by(
+    for diff in sessions.diff.query(DiffDb.Differential).filter_by(
         revisionID=revision.id
     ):
         if diff.creationMethod == "commit":
@@ -337,21 +341,21 @@ def get_diffs_changesets(
             "diff_id": diff.id,
             "revision_id": revision.id,
             "date_created": diff.dateCreated,
-            "author_email": get_user_email(diff.authorPHID, session_users),
-            "author_username": get_user_name(diff.authorPHID, session_users),
+            "author_email": get_user_email(diff.authorPHID, sessions),
+            "author_username": get_user_name(diff.authorPHID, sessions),
         }
 
         diffs.append(diff_obj)
-        changesets.extend(get_changesets(revision, diff, session_diff))
+        changesets.extend(get_changesets(revision, diff, sessions))
 
     return diffs, changesets, date_landed
 
 
 def get_changesets(
-    revision: DiffDb.Revision, diff: DiffDb.Differential, session_diff: Session
+    revision: DiffDb.Revision, diff: DiffDb.Differential, sessions: Sessions
 ) -> list[dict]:
     changesets = []
-    for changeset in session_diff.query(DiffDb.Changeset).filter_by(diffID=diff.id):
+    for changeset in sessions.diff.query(DiffDb.Changeset).filter_by(diffID=diff.id):
         changeset_obj = {
             "revision_id": revision.id,
             "diff_id": diff.id,
@@ -366,14 +370,12 @@ def get_changesets(
     return changesets
 
 
-def get_comments(
-    revision: DiffDb.Revision, session_diff: Session, session_users: Session
-) -> list[dict]:
+def get_comments(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
     comments = []
 
     # Query comments that are left on revisions but not specific diffs/changesets.
     comment_transaction_phids_query = (
-        session_diff.query(DiffDb.Transaction)
+        sessions.diff.query(DiffDb.Transaction)
         .with_entities(DiffDb.Transaction.commentPHID)
         .filter_by(
             objectPHID=revision.phid,
@@ -384,7 +386,7 @@ def get_comments(
 
     comment_transaction_phids = [row[0] for row in comment_transaction_phids_query]
 
-    for comment in session_diff.query(DiffDb.TransactionComment).filter(
+    for comment in sessions.diff.query(DiffDb.TransactionComment).filter(
         # Query all TransactionComments that match our revision PHID
         # or the non-diff comments.
         (DiffDb.TransactionComment.revisionPHID == revision.phid)
@@ -398,11 +400,11 @@ def get_comments(
 
         comment_obj = {
             "revision_id": revision.id,
-            "diff_id": get_diff_id_for_changeset(comment.changesetID, session_diff),
+            "diff_id": get_diff_id_for_changeset(comment.changesetID, sessions),
             "changeset_id": comment.changesetID,
             "comment_id": comment.id,
-            "author_email": get_user_email(comment.authorPHID, session_users),
-            "author_username": get_user_name(comment.authorPHID, session_users),
+            "author_email": get_user_email(comment.authorPHID, sessions),
+            "author_username": get_user_name(comment.authorPHID, sessions),
             "date_created": comment.dateCreated,
             "character_count": len(comment.content),
             "is_suggestion": is_suggestion,
@@ -418,8 +420,7 @@ def get_revision(
     bug_id: Optional[int],
     date_approved: Optional[int],
     date_landed: Optional[int],
-    session_diff: Session,
-    session_repo: Session,
+    sessions: Sessions,
     all_revisions: Any,
     bug_id_query: Any,
     projects_query: Any,
@@ -433,15 +434,13 @@ def get_revision(
         "date_created": revision.dateCreated,
         "date_modified": revision.dateModified,
         "date_landed": date_landed,
-        "last_review_id": get_last_review_id(revision.phid, session_diff),
+        "last_review_id": get_last_review_id(revision.phid, sessions),
         "current_status": revision.status,
-        "target_repository": get_target_repository(
-            revision.repositoryPHID, session_repo
-        ),
+        "target_repository": get_target_repository(revision.repositoryPHID, sessions),
         "stack_size": get_stack_size(
-            revision, bug_id, all_revisions, bug_id_query, session_diff
+            revision, bug_id, all_revisions, bug_id_query, sessions
         ),
-        "project_tags": get_revision_projects(revision, session_diff, projects_query),
+        "project_tags": get_revision_projects(revision, sessions, projects_query),
     }
 
 
@@ -610,10 +609,7 @@ def process():
 
     logging.info(f"Starting Phab-ETL with timestamp {now}.")
 
-    session_users = Session(engines["user"])
-    session_projects = Session(engines["project"])
-    session_repo = Session(engines["repository"])
-    session_diff = Session(engines["differential"])
+    sessions = Sessions()
 
     bq_client = bigquery.Client()
 
@@ -622,12 +618,12 @@ def process():
 
     time_queries = get_time_queries(now, bq_client)
 
-    updated_revisions = session_diff.query(DiffDb.Revision).filter(*time_queries)
-    all_revisions = session_diff.query(DiffDb.Revision)
+    updated_revisions = sessions.diff.query(DiffDb.Revision).filter(*time_queries)
+    all_revisions = sessions.diff.query(DiffDb.Revision)
 
-    projects_query = session_projects.query(ProjectDb.Project)
+    projects_query = sessions.projects.query(ProjectDb.Project)
 
-    bug_id_query = session_diff.query(DiffDb.CustomFieldStorage).filter(
+    bug_id_query = sessions.diff.query(DiffDb.CustomFieldStorage).filter(
         # TODO I got this value from the DB, what is it?
         DiffDb.CustomFieldStorage.fieldIndex
         == b"zdMFYM6423ua"
@@ -644,27 +640,23 @@ def process():
 
         diffs, changesets, date_landed = get_diffs_changesets(
             revision,
-            session_diff,
-            session_users,
+            sessions,
         )
 
-        review_requests, date_approved = get_review_requests(
-            revision, session_diff, session_projects, session_users
-        )
+        review_requests, date_approved = get_review_requests(revision, sessions)
 
         revision_json = get_revision(
             revision,
             bug_id,
             date_approved,
             date_landed,
-            session_diff,
-            session_repo,
+            sessions,
             all_revisions,
             bug_id_query,
             projects_query,
         )
 
-        comments = get_comments(revision, session_diff, session_users)
+        comments = get_comments(revision, sessions)
 
         phab_gathering_time = round(
             time.perf_counter() - phab_querying_start, ndigits=2
