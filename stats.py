@@ -413,6 +413,38 @@ def get_comments(
     return comments
 
 
+def get_revision(
+    revision: Any,
+    bug_id: Optional[int],
+    date_approved: Optional[int],
+    date_landed: Optional[int],
+    session_diff: Session,
+    session_repo: Session,
+    all_revisions: Any,
+    bug_id_query: Any,
+    projects_query: Any,
+) -> dict[str, Any]:
+    """Return a dict with transformed data for a revision."""
+    return {
+        "bug_id": bug_id,
+        "revision_id": revision.id,
+        # Set `date_approved` only when a landing has been detected.
+        "date_approved": date_approved if date_landed else None,
+        "date_created": revision.dateCreated,
+        "date_modified": revision.dateModified,
+        "date_landed": date_landed,
+        "last_review_id": get_last_review_id(revision.phid, session_diff),
+        "current_status": revision.status,
+        "target_repository": get_target_repository(
+            revision.repositoryPHID, session_repo
+        ),
+        "stack_size": get_stack_size(
+            revision, bug_id, all_revisions, bug_id_query, session_diff
+        ),
+        "project_tags": get_revision_projects(revision, session_diff, projects_query),
+    }
+
+
 def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
     """Get the timestamp of the most recently added entry in BigQuery.
 
@@ -620,26 +652,17 @@ def process():
             revision, session_diff, session_projects, session_users
         )
 
-        revision_json = {
-            "bug_id": bug_id,
-            "revision_id": revision.id,
-            # Set `date_approved` only when a landing has been detected.
-            "date_approved": date_approved if date_landed else None,
-            "date_created": revision.dateCreated,
-            "date_modified": revision.dateModified,
-            "date_landed": date_landed,
-            "last_review_id": get_last_review_id(revision.phid, session_diff),
-            "current_status": revision.status,
-            "target_repository": get_target_repository(
-                revision.repositoryPHID, session_repo
-            ),
-            "stack_size": get_stack_size(
-                revision, bug_id, all_revisions, bug_id_query, session_diff
-            ),
-            "project_tags": get_revision_projects(
-                revision, session_diff, projects_query
-            ),
-        }
+        revision_json = get_revision(
+            revision,
+            bug_id,
+            date_approved,
+            date_landed,
+            session_diff,
+            session_repo,
+            all_revisions,
+            bug_id_query,
+            projects_query,
+        )
 
         comments = get_comments(revision, session_diff, session_users)
 
