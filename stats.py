@@ -263,7 +263,7 @@ def get_review_requests(
     session_diff: Session,
     session_projects: Session,
     session_users: Session,
-) -> tuple[list[dict], Optional[datetime]]:
+) -> tuple[list[dict], Optional[int]]:
     review_requests = []
     date_approved = None
 
@@ -315,7 +315,7 @@ def get_diffs_changesets(
     revision: DiffDb.Revision,
     session_diff: Session,
     session_users: Session,
-) -> tuple[list[dict], list[dict], Optional[datetime]]:
+) -> tuple[list[dict], list[dict], Optional[int]]:
     diffs = []
     changesets = []
     date_landed = None
@@ -413,7 +413,7 @@ def get_comments(
     return comments
 
 
-def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
+def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[int]:
     """Get the timestamp of the most recently added entry in BigQuery.
 
     See https://github.com/googleapis/python-bigquery/blob/main/samples/query_script.py
