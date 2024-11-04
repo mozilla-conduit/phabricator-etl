@@ -669,7 +669,7 @@ def process():
         (BQ_REVIEW_REQUESTS_TABLE_ID, "review_id"),
         (BQ_COMMENTS_TABLE_ID, "comment_id"),
     ):
-        staging_table_id = staging_tables[target_table_id].full_table_id
+        staging_table_id = sql_table_id(staging_tables[target_table_id])
         merge_into_bigquery(
             bq_client,
             target_table_id,
