@@ -11,7 +11,7 @@ import pprint
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import IntEnum
 from typing import Optional, Any
 
@@ -413,7 +413,7 @@ def get_comments(
     return comments
 
 
-def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[int]:
+def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
     """Get the timestamp of the most recently added entry in BigQuery.
 
     See https://github.com/googleapis/python-bigquery/blob/main/samples/query_script.py
@@ -470,17 +470,27 @@ def get_time_queries(now: datetime, bq_client: bigquery.Client) -> list:
     Dont take the revisions created before the last run
     """
     queries = [
-        DiffDb.Revision.dateCreated < now.timestamp(),
-        DiffDb.Revision.dateModified < now.timestamp(),
+        or_(
+            DiffDb.Revision.dateCreated < now.timestamp(),
+            DiffDb.Revision.dateModified < now.timestamp(),
+        ),
     ]
-    last_run_timestamp = get_last_run_timestamp(bq_client)
+    last_run_datetime = get_last_run_timestamp(bq_client)
 
-    if last_run_timestamp:
-        logging.info(f"Using {last_run_timestamp} as the last run timestamp.")
+    if last_run_datetime:
+        last_run_datetime = last_run_datetime.replace(tzinfo=timezone.utc)
+        last_run_timestamp = last_run_datetime.timestamp()
+
+        logging.info(
+            f"Using {last_run_datetime} as the last run date ({last_run_timestamp})."
+        )
+
         queries.extend(
             [
-                DiffDb.Revision.dateCreated > last_run_timestamp,
-                DiffDb.Revision.dateModified > last_run_timestamp,
+                or_(
+                    DiffDb.Revision.dateCreated > last_run_timestamp,
+                    DiffDb.Revision.dateModified > last_run_timestamp,
+                ),
             ]
         )
     else:
