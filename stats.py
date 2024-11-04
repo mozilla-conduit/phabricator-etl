@@ -517,7 +517,7 @@ def merge_into_bigquery(
     If there is no matching ID, insert a new row.
     """
     logging.info(
-        f"Merging stable table {staging_table_id} into target table `{table_id}`."
+        f"Merging staging table {staging_table_id} into target table `{table_id}`."
     )
     target_table = bq_tables[table_id]
 
