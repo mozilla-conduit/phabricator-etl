@@ -92,7 +92,7 @@ class UserDb:
 @dataclass
 class ProjectDb:
     Project = bases["project"].classes.project
-    Edges = bases["preject"].classes.edge
+    Edges = bases["project"].classes.edge
 
 
 @dataclass
@@ -418,9 +418,9 @@ def get_comments(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
     return comments
 
 
-def get_review_groups(sessions: Sessions):
+def get_review_groups(sessions: Sessions) -> list[dict]:
     """Returns a dict of group names with the members of each group"""
-    groups = {}
+    groups = []
 
     # Get the project objects that end in '-reviewers'.
     projects = (
@@ -449,7 +449,13 @@ def get_review_groups(sessions: Sessions):
             name = get_user_name(phid, sessions)
             member_names.append(name)
 
-        groups[project] = member_names
+        groups.append(
+            {
+                "group_id": project.id,
+                "group_name": project.name,
+                "group_members": member_names,
+            }
+        )
 
     return groups
 
@@ -514,6 +520,7 @@ def load_bigquery_tables(
         BQ_CHANGESETS_TABLE_ID: bq_client.get_table(BQ_CHANGESETS_TABLE_ID),
         BQ_COMMENTS_TABLE_ID: bq_client.get_table(BQ_COMMENTS_TABLE_ID),
         BQ_REVIEW_REQUESTS_TABLE_ID: bq_client.get_table(BQ_REVIEW_REQUESTS_TABLE_ID),
+        BQ_REVIEW_GROUPS_TABLE_ID: bq_client.get_table(BQ_REVIEW_GROUPS_TABLE_ID),
     }
 
 
@@ -697,6 +704,8 @@ def process():
 
         comments = get_comments(revision, sessions)
 
+        review_groups = get_review_groups(sessions)
+
         phab_gathering_time = round(
             time.perf_counter() - phab_querying_start, ndigits=2
         )
@@ -717,6 +726,7 @@ def process():
             (BQ_CHANGESETS_TABLE_ID, changesets),
             (BQ_REVIEW_REQUESTS_TABLE_ID, review_requests),
             (BQ_COMMENTS_TABLE_ID, comments),
+            (BQ_REVIEW_GROUPS_TABLE_ID, review_groups)
         ):
             submit_to_bigquery(bq_client, staging_tables[target_table_id], data)
 
@@ -735,6 +745,7 @@ def process():
         (BQ_CHANGESETS_TABLE_ID, "changeset_id"),
         (BQ_REVIEW_REQUESTS_TABLE_ID, "review_id"),
         (BQ_COMMENTS_TABLE_ID, "comment_id"),
+        (BQ_REVIEW_GROUPS_TABLE_ID, "group_id"),
     ):
         staging_table_id = sql_table_id(staging_tables[target_table_id])
         merge_into_bigquery(
@@ -747,16 +758,6 @@ def process():
 
         delete_staging_table(bq_client, staging_table_id)
 
-    # Submit reviewer group member data to BQ. Cannot using staging tables
-    # since this is a daily snapshot of all reviewer groups.
-    review_groups = get_review_groups(sessions)
-    snapshot_date = now.date()
-    review_group_data = []
-    for name, members in review_groups.items():
-        review_group_data.append(
-            {"date": snapshot_date, "group_name": name, "group_members": members}
-        )
-    submit_to_bigquery(bq_client, BQ_REVIEW_GROUPS_TABLE_ID, review_group_data)
 
 
 if __name__ == "__main__":
