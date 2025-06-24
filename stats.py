@@ -759,6 +759,5 @@ def process():
         delete_staging_table(bq_client, staging_table_id)
 
 
-
 if __name__ == "__main__":
     process()
