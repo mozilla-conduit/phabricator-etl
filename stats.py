@@ -445,15 +445,19 @@ def get_review_groups(sessions: Sessions) -> list[dict]:
         member_phids = {edge.dst for edge in edge_query_result}
 
         member_names = []
+        member_emails = []
         for phid in member_phids:
             name = get_user_name(phid, sessions)
             member_names.append(name)
+            email = get_user_email(phid, sessions)
+            member_emails.append(email)
 
         groups.append(
             {
                 "group_id": project.id,
                 "group_name": project.name,
-                "group_members": member_names,
+                "group_usernames": member_names,
+                "group_emails": member_emails,
             }
         )
 
