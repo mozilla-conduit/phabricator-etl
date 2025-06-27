@@ -425,9 +425,11 @@ def get_review_groups(sessions: Sessions) -> list[dict]:
     # Get the project objects that end in '-reviewers'.
     projects = (
         sessions.projects.query(ProjectDb.Project)
-        .filter(ProjectDb.Project.name.endsWith("-reviewers"))
+        .filter(ProjectDb.Project.name.endswith("-reviewers"))
         .all()
     )
+
+    logging.info(f"Found {projects.count()} review groups for processing.")
 
     for project in projects:
         # Get a list of members of this group
@@ -679,6 +681,8 @@ def process():
         == b"zdMFYM6423ua"
     )
 
+    review_groups = get_review_groups(sessions)
+
     logging.info(f"Found {updated_revisions.count()} revisions for processing.")
 
     for revision in updated_revisions:
@@ -707,8 +711,6 @@ def process():
         )
 
         comments = get_comments(revision, sessions)
-
-        review_groups = get_review_groups(sessions)
 
         phab_gathering_time = round(
             time.perf_counter() - phab_querying_start, ndigits=2
