@@ -29,6 +29,7 @@ BQ_DIFFS_TABLE_ID = os.environ["BQ_DIFFS_TABLE_ID"]
 BQ_CHANGESETS_TABLE_ID = os.environ["BQ_CHANGESETS_TABLE_ID"]
 BQ_COMMENTS_TABLE_ID = os.environ["BQ_COMMENTS_TABLE_ID"]
 BQ_REVIEW_REQUESTS_TABLE_ID = os.environ["BQ_REVIEW_REQUESTS_TABLE_ID"]
+BQ_REVIEW_GROUPS_TABLE_ID = os.environ["BQ_REVIEW_GROUPS_TABLE_ID"]
 
 DEBUG = "DEBUG" in os.environ
 PHAB_DB_URL = os.environ.get("PHAB_URL", "127.0.0.1")
@@ -91,6 +92,7 @@ class UserDb:
 @dataclass
 class ProjectDb:
     Project = bases["project"].classes.project
+    Edges = bases["project"].classes.edge
 
 
 @dataclass
@@ -166,6 +168,7 @@ class PhabricatorEdgeConstant(IntEnum):
     DEPENDS_ON = 5
     DEPENDED_ON = 6
     OBJECT_HAS_PROJECT = 41
+    PROJECT_HAS_MEMBER = 13
 
 
 def get_revision_projects(
@@ -415,6 +418,54 @@ def get_comments(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
     return comments
 
 
+def get_review_groups(sessions: Sessions) -> list[dict]:
+    """Returns a dict of group names with the members of each group"""
+    groups = []
+
+    # Get the project objects that end in '-reviewers'.
+    projects = (
+        sessions.projects.query(ProjectDb.Project)
+        .filter(ProjectDb.Project.name.endswith("-reviewers"))
+        .all()
+    )
+
+    logging.info(f"Found {projects.count()} review groups for processing.")
+
+    for project in projects:
+        # Get a list of members of this group
+        edge_query_result = (
+            sessions.projects.query(ProjectDb.Edges)
+            .filter(
+                ProjectDb.Edges.src == project.phid,
+                ProjectDb.Edges.type
+                == PhabricatorEdgeConstant.PROJECT_HAS_MEMBER.value,
+            )
+            .all()
+        )
+
+        # Get the PHID of each member (the destination on the edge).
+        member_phids = {edge.dst for edge in edge_query_result}
+
+        member_names = []
+        member_emails = []
+        for phid in member_phids:
+            name = get_user_name(phid, sessions)
+            member_names.append(name)
+            email = get_user_email(phid, sessions)
+            member_emails.append(email)
+
+        groups.append(
+            {
+                "group_id": project.id,
+                "group_name": project.name,
+                "group_usernames": member_names,
+                "group_emails": member_emails,
+            }
+        )
+
+    return groups
+
+
 def get_revision(
     revision: Any,
     bug_id: Optional[int],
@@ -475,6 +526,7 @@ def load_bigquery_tables(
         BQ_CHANGESETS_TABLE_ID: bq_client.get_table(BQ_CHANGESETS_TABLE_ID),
         BQ_COMMENTS_TABLE_ID: bq_client.get_table(BQ_COMMENTS_TABLE_ID),
         BQ_REVIEW_REQUESTS_TABLE_ID: bq_client.get_table(BQ_REVIEW_REQUESTS_TABLE_ID),
+        BQ_REVIEW_GROUPS_TABLE_ID: bq_client.get_table(BQ_REVIEW_GROUPS_TABLE_ID),
     }
 
 
@@ -629,6 +681,8 @@ def process():
         == b"zdMFYM6423ua"
     )
 
+    review_groups = get_review_groups(sessions)
+
     logging.info(f"Found {updated_revisions.count()} revisions for processing.")
 
     for revision in updated_revisions:
@@ -678,6 +732,7 @@ def process():
             (BQ_CHANGESETS_TABLE_ID, changesets),
             (BQ_REVIEW_REQUESTS_TABLE_ID, review_requests),
             (BQ_COMMENTS_TABLE_ID, comments),
+            (BQ_REVIEW_GROUPS_TABLE_ID, review_groups)
         ):
             submit_to_bigquery(bq_client, staging_tables[target_table_id], data)
 
@@ -696,6 +751,7 @@ def process():
         (BQ_CHANGESETS_TABLE_ID, "changeset_id"),
         (BQ_REVIEW_REQUESTS_TABLE_ID, "review_id"),
         (BQ_COMMENTS_TABLE_ID, "comment_id"),
+        (BQ_REVIEW_GROUPS_TABLE_ID, "group_id"),
     ):
         staging_table_id = sql_table_id(staging_tables[target_table_id])
         merge_into_bigquery(
