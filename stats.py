@@ -427,7 +427,6 @@ def get_review_groups(sessions: Sessions) -> list[dict]:
     projects = (
         sessions.projects.query(ProjectDb.Project)
         .filter(ProjectDb.Project.name.endswith("-reviewers"))
-        .all()
     )
 
     logging.info(f"Found {projects.count()} review groups for processing.")
