@@ -341,6 +341,7 @@ def get_diffs_changesets(
             continue
 
         diff_obj = {
+            "creation_method": diff.creationMethod,
             "diff_id": diff.id,
             "revision_id": revision.id,
             "date_created": diff.dateCreated,
