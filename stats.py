@@ -424,9 +424,8 @@ def get_review_groups(sessions: Sessions) -> list[dict]:
     groups = []
 
     # Get the project objects that end in '-reviewers'.
-    projects = (
-        sessions.projects.query(ProjectDb.Project)
-        .filter(ProjectDb.Project.name.endswith("-reviewers"))
+    projects = sessions.projects.query(ProjectDb.Project).filter(
+        ProjectDb.Project.name.endswith("-reviewers")
     )
 
     logging.info(f"Found {projects.count()} review groups for processing.")
@@ -516,9 +515,7 @@ def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
     return rows[0].last_run
 
 
-def load_bigquery_tables(
-    bq_client: bigquery.Client,
-) -> dict[str, bigquery.Table]:
+def load_bigquery_tables(bq_client: bigquery.Client) -> dict[str, bigquery.Table]:
     """Return a mapping of each table ID to the table field->type schema."""
     return {
         BQ_REVISIONS_TABLE_ID: bq_client.get_table(BQ_REVISIONS_TABLE_ID),
@@ -682,7 +679,9 @@ def process():
     )
 
     review_groups = get_review_groups(sessions)
-    submit_to_bigquery(bq_client, staging_tables[BQ_REVIEW_REQUESTS_TABLE_ID], review_groups)
+    submit_to_bigquery(
+        bq_client, staging_tables[BQ_REVIEW_REQUESTS_TABLE_ID], review_groups
+    )
 
     logging.info(f"Found {updated_revisions.count()} revisions for processing.")
 
