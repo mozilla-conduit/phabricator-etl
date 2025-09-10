@@ -682,6 +682,7 @@ def process():
     )
 
     review_groups = get_review_groups(sessions)
+    submit_to_bigquery(bq_client, staging_tables[BQ_REVIEW_REQUESTS_TABLE_ID], review_groups)
 
     logging.info(f"Found {updated_revisions.count()} revisions for processing.")
 
@@ -732,7 +733,6 @@ def process():
             (BQ_CHANGESETS_TABLE_ID, changesets),
             (BQ_REVIEW_REQUESTS_TABLE_ID, review_requests),
             (BQ_COMMENTS_TABLE_ID, comments),
-            (BQ_REVIEW_GROUPS_TABLE_ID, review_groups)
         ):
             submit_to_bigquery(bq_client, staging_tables[target_table_id], data)
 
