@@ -680,7 +680,7 @@ def process():
 
     review_groups = get_review_groups(sessions)
     submit_to_bigquery(
-        bq_client, staging_tables[BQ_REVIEW_REQUESTS_TABLE_ID], review_groups
+        bq_client, staging_tables[BQ_REVIEW_GROUPS_TABLE_ID], review_groups
     )
 
     logging.info(f"Found {updated_revisions.count()} revisions for processing.")
