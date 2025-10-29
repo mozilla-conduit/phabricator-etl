@@ -454,7 +454,6 @@ def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict
             "author_email": get_user_email(transaction.authorPHID, sessions),
             "author_username": get_user_name(transaction.authorPHID, sessions),
             "date_created": transaction.dateCreated,
-            "date_modified": transaction.dateModified,
             "old_value": transaction.oldValue,
             "new_value": transaction.newValue,
         }
