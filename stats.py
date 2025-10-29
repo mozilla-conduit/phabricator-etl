@@ -437,7 +437,7 @@ def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict
         "differential.revision.resign",
         "differential.revision.wrong",
         "differential.revision.reopen",
-    ];
+    ]
 
     for transaction in (
         sessions.diff.query(DiffDb.Transaction)
