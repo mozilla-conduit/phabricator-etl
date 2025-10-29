@@ -39,6 +39,22 @@ PHAB_DB_PORT = os.environ.get("PHAB_PORT", "3307")
 PHAB_DB_USER = os.environ.get("PHAB_USER", "root")
 PHAB_DB_TOKEN = os.environ["PHAB_TOKEN"]
 
+# Transaction types we care about for tracking state changes
+STATE_CHANGE_TYPES = [
+    "differential.revision.reject",
+    "differential.revision.status",
+    "differential.revision.accept",
+    "differential.revision.void",
+    "differential.revision.request",
+    "differential.revision.close",
+    "differential.revision.abandon",
+    "differential.revision.reclaim",
+    "differential.revision.commandeer",
+    "differential.revision.resign",
+    "differential.revision.wrong",
+    "differential.revision.reopen",
+]
+
 # Configure simple logging.
 logging.basicConfig(
     level=logging.INFO,
@@ -423,22 +439,6 @@ def get_comments(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
 def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
     transactions = []
 
-    # Transaction types we care about for tracking state changes
-    STATE_CHANGE_TYPES = [
-        "differential.revision.reject",
-        "differential.revision.status",
-        "differential.revision.accept",
-        "differential.revision.void",
-        "differential.revision.request",
-        "differential.revision.close",
-        "differential.revision.abandon",
-        "differential.revision.reclaim",
-        "differential.revision.commandeer",
-        "differential.revision.resign",
-        "differential.revision.wrong",
-        "differential.revision.reopen",
-    ]
-
     for transaction in (
         sessions.diff.query(DiffDb.Transaction)
         .filter(
@@ -461,7 +461,7 @@ def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict
         transactions.append(transaction_obj)
 
     return transactions
- 
+
 
 def get_review_groups(sessions: Sessions) -> list[dict]:
     """Returns a dict of group names with the members of each group"""
