@@ -29,6 +29,7 @@ BQ_DIFFS_TABLE_ID = os.environ["BQ_DIFFS_TABLE_ID"]
 BQ_CHANGESETS_TABLE_ID = os.environ["BQ_CHANGESETS_TABLE_ID"]
 BQ_COMMENTS_TABLE_ID = os.environ["BQ_COMMENTS_TABLE_ID"]
 BQ_REVIEW_REQUESTS_TABLE_ID = os.environ["BQ_REVIEW_REQUESTS_TABLE_ID"]
+BQ_TRANSACTIONS_TABLE_ID = os.environ["BQ_TRANSACTIONS_TABLE_ID"]
 
 DEBUG = "DEBUG" in os.environ
 PHAB_DB_URL = os.environ.get("PHAB_URL", "127.0.0.1")
@@ -415,6 +416,50 @@ def get_comments(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
     return comments
 
 
+def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
+    transactions = []
+
+    # Transaction types we care about for tracking state changes
+    STATE_CHANGE_TYPES = [
+        "differential.revision.reject",
+        "differential.revision.status",
+        "differential.revision.accept",
+        "differential.revision.void",
+        "differential.revision.request",
+        "differential.revision.close",
+        "differential.revision.abandon",
+        "differential.revision.reclaim",
+        "differential.revision.commandeer",
+        "differential.revision.resign",
+        "differential.revision.wrong",
+        "differential.revision.reopen",
+    ];
+
+    for transaction in (
+        sessions.diff.query(DiffDb.Transaction)
+        .filter(
+            DiffDb.Transaction.objectPHID == revision.phid,
+            DiffDb.Transaction.transactionType.in_(STATE_CHANGE_TYPES),
+        )
+        .order_by(DiffDb.Transaction.dateCreated)
+    ):
+        transaction_obj = {
+            "revision_id": revision.id,
+            "transaction_id": transaction.id,
+            "transaction_type": transaction.transactionType,
+            "author_email": get_user_email(transaction.authorPHID, sessions),
+            "author_username": get_user_name(transaction.authorPHID, sessions),
+            "date_created": transaction.dateCreated,
+            "date_modified": transaction.dateModified,
+            "old_value": transaction.oldValue,
+            "new_value": transaction.newValue,
+        }
+
+        transactions.append(transaction_obj)
+
+    return transactions
+
+
 def get_revision(
     revision: Any,
     bug_id: Optional[int],
@@ -475,6 +520,7 @@ def load_bigquery_tables(
         BQ_CHANGESETS_TABLE_ID: bq_client.get_table(BQ_CHANGESETS_TABLE_ID),
         BQ_COMMENTS_TABLE_ID: bq_client.get_table(BQ_COMMENTS_TABLE_ID),
         BQ_REVIEW_REQUESTS_TABLE_ID: bq_client.get_table(BQ_REVIEW_REQUESTS_TABLE_ID),
+        BQ_TRANSACTIONS_TABLE_ID: bq_client.get_table(BQ_TRANSACTIONS_TABLE_ID),
     }
 
 
@@ -658,6 +704,8 @@ def process():
 
         comments = get_comments(revision, sessions)
 
+        transactions = get_transactions(revision, sessions)
+
         phab_gathering_time = round(
             time.perf_counter() - phab_querying_start, ndigits=2
         )
@@ -678,6 +726,7 @@ def process():
             (BQ_CHANGESETS_TABLE_ID, changesets),
             (BQ_REVIEW_REQUESTS_TABLE_ID, review_requests),
             (BQ_COMMENTS_TABLE_ID, comments),
+            (BQ_TRANSACTIONS_TABLE_ID, transactions),
         ):
             submit_to_bigquery(bq_client, staging_tables[target_table_id], data)
 
@@ -696,6 +745,7 @@ def process():
         (BQ_CHANGESETS_TABLE_ID, "changeset_id"),
         (BQ_REVIEW_REQUESTS_TABLE_ID, "review_id"),
         (BQ_COMMENTS_TABLE_ID, "comment_id"),
+        (BQ_TRANSACTIONS_TABLE_ID, "transaction_id"),
     ):
         staging_table_id = sql_table_id(staging_tables[target_table_id])
         merge_into_bigquery(
