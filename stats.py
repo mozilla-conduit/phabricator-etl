@@ -41,18 +41,18 @@ PHAB_DB_TOKEN = os.environ["PHAB_TOKEN"]
 
 # Transaction types we care about for tracking state changes
 STATE_CHANGE_TYPES = [
-    "differential.revision.reject",
-    "differential.revision.status",
-    "differential.revision.accept",
-    "differential.revision.void",
-    "differential.revision.request",
-    "differential.revision.close",
     "differential.revision.abandon",
-    "differential.revision.reclaim",
+    "differential.revision.accept",
+    "differential.revision.close",
     "differential.revision.commandeer",
-    "differential.revision.resign",
-    "differential.revision.wrong",
+    "differential.revision.reclaim",
+    "differential.revision.reject",
     "differential.revision.reopen",
+    "differential.revision.request",
+    "differential.revision.resign",
+    "differential.revision.status",
+    "differential.revision.void",
+    "differential.revision.wrong",
 ]
 
 # Configure simple logging.
