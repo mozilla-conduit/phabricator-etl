@@ -437,6 +437,15 @@ def get_comments(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
 
 
 def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
+    # If the newValue or oldValue is a boolean, then we convert it to the
+    # string "1" or "0". Otherwise we leave it as a string.
+    def format_value(value):
+        if isinstance(value, bool):
+            return str(int(value))  # "1" for True, "0" for False
+        if isinstance(value, str):
+            return value  # leave strings unchanged
+        return str(value)  # fallback: convert everything else to string
+
     transactions = []
 
     for transaction in (
@@ -447,6 +456,10 @@ def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict
         )
         .order_by(DiffDb.Transaction.dateCreated)
     ):
+
+        newValue = format_value(transaction.newValue)
+        oldValue = format_value(transaction.oldValue)
+
         transaction_obj = {
             "revision_id": revision.id,
             "transaction_id": transaction.id,
@@ -454,8 +467,8 @@ def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict
             "author_email": get_user_email(transaction.authorPHID, sessions),
             "author_username": get_user_name(transaction.authorPHID, sessions),
             "date_created": transaction.dateCreated,
-            "old_value": transaction.oldValue,
-            "new_value": transaction.newValue,
+            "old_value": oldValue,
+            "new_value": newValue,
         }
 
         transactions.append(transaction_obj)
