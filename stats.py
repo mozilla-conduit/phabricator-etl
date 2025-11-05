@@ -29,6 +29,7 @@ BQ_DIFFS_TABLE_ID = os.environ["BQ_DIFFS_TABLE_ID"]
 BQ_CHANGESETS_TABLE_ID = os.environ["BQ_CHANGESETS_TABLE_ID"]
 BQ_COMMENTS_TABLE_ID = os.environ["BQ_COMMENTS_TABLE_ID"]
 BQ_REVIEW_REQUESTS_TABLE_ID = os.environ["BQ_REVIEW_REQUESTS_TABLE_ID"]
+BQ_TRANSACTIONS_TABLE_ID = os.environ["BQ_TRANSACTIONS_TABLE_ID"]
 BQ_REVIEW_GROUPS_TABLE_ID = os.environ["BQ_REVIEW_GROUPS_TABLE_ID"]
 
 DEBUG = "DEBUG" in os.environ
@@ -37,6 +38,22 @@ PHAB_DB_NAMESPACE = os.environ.get("PHAB_NAMESPACE", "bitnami_phabricator")
 PHAB_DB_PORT = os.environ.get("PHAB_PORT", "3307")
 PHAB_DB_USER = os.environ.get("PHAB_USER", "root")
 PHAB_DB_TOKEN = os.environ["PHAB_TOKEN"]
+
+# Transaction types we care about for tracking state changes
+STATE_CHANGE_TYPES = [
+    "differential.revision.abandon",
+    "differential.revision.accept",
+    "differential.revision.close",
+    "differential.revision.commandeer",
+    "differential.revision.reclaim",
+    "differential.revision.reject",
+    "differential.revision.reopen",
+    "differential.revision.request",
+    "differential.revision.resign",
+    "differential.revision.status",
+    "differential.revision.void",
+    "differential.revision.wrong",
+]
 
 # Configure simple logging.
 logging.basicConfig(
@@ -419,6 +436,33 @@ def get_comments(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
     return comments
 
 
+def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
+    transactions = []
+
+    for transaction in (
+        sessions.diff.query(DiffDb.Transaction)
+        .filter(
+            DiffDb.Transaction.objectPHID == revision.phid,
+            DiffDb.Transaction.transactionType.in_(STATE_CHANGE_TYPES),
+        )
+        .order_by(DiffDb.Transaction.dateCreated)
+    ):
+        transaction_obj = {
+            "revision_id": revision.id,
+            "transaction_id": transaction.id,
+            "transaction_type": transaction.transactionType,
+            "author_email": get_user_email(transaction.authorPHID, sessions),
+            "author_username": get_user_name(transaction.authorPHID, sessions),
+            "date_created": transaction.dateCreated,
+            "old_value": convert_value_to_string(transaction.oldValue),
+            "new_value": convert_value_to_string(transaction.newValue),
+        }
+
+        transactions.append(transaction_obj)
+
+    return transactions
+
+
 def get_review_groups(sessions: Sessions) -> list[dict]:
     """Returns a dict of group names with the members of each group"""
     groups = []
@@ -494,6 +538,20 @@ def get_revision(
     }
 
 
+
+def convert_value_to_string(value):
+    """Coerce transaction values to string.
+    
+    If the passed value is a boolean, then we convert it to the string 
+    "1" or "0". Otherwise we return it as a string.
+    """
+    if isinstance(value, bool):
+        # "1" for True, "0" for False
+        return str(int(value))
+    
+    # fallback: convert everything else to string
+    return str(value)  
+
 def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
     """Get the timestamp of the most recently added entry in BigQuery.
 
@@ -523,6 +581,7 @@ def load_bigquery_tables(bq_client: bigquery.Client) -> dict[str, bigquery.Table
         BQ_CHANGESETS_TABLE_ID: bq_client.get_table(BQ_CHANGESETS_TABLE_ID),
         BQ_COMMENTS_TABLE_ID: bq_client.get_table(BQ_COMMENTS_TABLE_ID),
         BQ_REVIEW_REQUESTS_TABLE_ID: bq_client.get_table(BQ_REVIEW_REQUESTS_TABLE_ID),
+        BQ_TRANSACTIONS_TABLE_ID: bq_client.get_table(BQ_TRANSACTIONS_TABLE_ID),
         BQ_REVIEW_GROUPS_TABLE_ID: bq_client.get_table(BQ_REVIEW_GROUPS_TABLE_ID),
     }
 
@@ -712,6 +771,8 @@ def process():
 
         comments = get_comments(revision, sessions)
 
+        transactions = get_transactions(revision, sessions)
+
         phab_gathering_time = round(
             time.perf_counter() - phab_querying_start, ndigits=2
         )
@@ -732,6 +793,7 @@ def process():
             (BQ_CHANGESETS_TABLE_ID, changesets),
             (BQ_REVIEW_REQUESTS_TABLE_ID, review_requests),
             (BQ_COMMENTS_TABLE_ID, comments),
+            (BQ_TRANSACTIONS_TABLE_ID, transactions),
         ):
             submit_to_bigquery(bq_client, staging_tables[target_table_id], data)
 
@@ -750,6 +812,7 @@ def process():
         (BQ_CHANGESETS_TABLE_ID, "changeset_id"),
         (BQ_REVIEW_REQUESTS_TABLE_ID, "review_id"),
         (BQ_COMMENTS_TABLE_ID, "comment_id"),
+        (BQ_TRANSACTIONS_TABLE_ID, "transaction_id"),
         (BQ_REVIEW_GROUPS_TABLE_ID, "group_id"),
     ):
         staging_table_id = sql_table_id(staging_tables[target_table_id])
