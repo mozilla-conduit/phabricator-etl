@@ -538,13 +538,19 @@ def get_revision(
     }
 
 
-# If the passed value is a boolean, then we convert it to the
-# string "1" or "0". Otherwise we return it as a string.
-def convert_value_to_string(value):
-    if isinstance(value, bool):
-        return str(int(value))  # "1" for True, "0" for False
-    return str(value)  # fallback: convert everything else to string
 
+def convert_value_to_string(value):
+    """Coerce transaction values to string.
+    
+    If the passed value is a boolean, then we convert it to the string 
+    "1" or "0". Otherwise we return it as a string.
+    """
+    if isinstance(value, bool):
+        # "1" for True, "0" for False
+        return str(int(value))
+    
+    # fallback: convert everything else to string
+    return str(value)  
 
 def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
     """Get the timestamp of the most recently added entry in BigQuery.
