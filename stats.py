@@ -437,15 +437,6 @@ def get_comments(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
 
 
 def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
-    # If the newValue or oldValue is a boolean, then we convert it to the
-    # string "1" or "0". Otherwise we leave it as a string.
-    def format_value(value):
-        if isinstance(value, bool):
-            return str(int(value))  # "1" for True, "0" for False
-        if isinstance(value, str):
-            return value  # leave strings unchanged
-        return str(value)  # fallback: convert everything else to string
-
     transactions = []
 
     for transaction in (
@@ -456,10 +447,6 @@ def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict
         )
         .order_by(DiffDb.Transaction.dateCreated)
     ):
-
-        newValue = format_value(transaction.newValue)
-        oldValue = format_value(transaction.oldValue)
-
         transaction_obj = {
             "revision_id": revision.id,
             "transaction_id": transaction.id,
@@ -467,8 +454,8 @@ def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict
             "author_email": get_user_email(transaction.authorPHID, sessions),
             "author_username": get_user_name(transaction.authorPHID, sessions),
             "date_created": transaction.dateCreated,
-            "old_value": oldValue,
-            "new_value": newValue,
+            "old_value": convert_value_to_string(transaction.oldValue),
+            "new_value": convert_value_to_string(transaction.newValue),
         }
 
         transactions.append(transaction_obj)
@@ -549,6 +536,14 @@ def get_revision(
         ),
         "project_tags": get_revision_projects(revision, sessions, projects_query),
     }
+
+
+# If the passed value is a boolean, then we convert it to the
+# string "1" or "0". Otherwise we return it as a string.
+def convert_value_to_string(value):
+    if isinstance(value, bool):
+        return str(int(value))  # "1" for True, "0" for False
+    return str(value)  # fallback: convert everything else to string
 
 
 def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
