@@ -467,9 +467,9 @@ def get_review_groups(sessions: Sessions) -> list[dict]:
     """Returns a dict of group names with the members of each group"""
     groups = []
 
-    # Get the project objects that end in '-reviewers'.
+    # Get the project objects that do not start with 'bmo-'.
     projects = sessions.projects.query(ProjectDb.Project).filter(
-        ProjectDb.Project.name.endswith("-reviewers")
+        ~ProjectDb.Project.name.startswith("bmo-")
     )
 
     logging.info(f"Found {projects.count()} review groups for processing.")
