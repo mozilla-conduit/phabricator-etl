@@ -658,21 +658,37 @@ def merge_into_bigquery(
     staging_table_id: str,
     id_column: str,
     bq_tables: dict[str, bigquery.Table],
+    updated_at_column: Optional[str] = None,
 ):
     """Use a `MERGE` statement to upsert rows into BigQuery.
 
     Perform a `MERGE` statement to detect if an entry in the table has the matching ID.
     If there is a matching ID, update the existing entry with the new data.
     If there is no matching ID, insert a new row.
+
+    The staging table is de-duplicated via a subquery before merging, so that
+    duplicate rows (keyed on `id_column`) do not cause the `MERGE` to fail.
+    When `updated_at_column` is provided, the row with the most recent value is
+    kept; otherwise an arbitrary row is chosen.
     """
     logging.info(
         f"Merging staging table {staging_table_id} into target table `{table_id}`."
     )
     target_table = bq_tables[table_id]
 
+    if updated_at_column:
+        order_clause = f"ORDER BY {updated_at_column} DESC"
+    else:
+        order_clause = "ORDER BY (SELECT NULL)"
+
+    dedup_subquery = (
+        f"SELECT * FROM `{staging_table_id}` "
+        f"QUALIFY ROW_NUMBER() OVER (PARTITION BY {id_column} {order_clause}) = 1"
+    )
+
     merge_query = f"""
         MERGE `{table_id}` as T
-        USING `{staging_table_id}` as S
+        USING ({dedup_subquery}) as S
         ON T.{id_column} = S.{id_column}
         WHEN MATCHED THEN
           UPDATE SET {", ".join(f"{field.name} = S.{field.name}" for field in target_table.schema)}
@@ -806,14 +822,14 @@ def process():
         )
 
     # Merge staging table changes into target tables.
-    for target_table_id, id_column in (
-        (BQ_REVISIONS_TABLE_ID, "revision_id"),
-        (BQ_DIFFS_TABLE_ID, "diff_id"),
-        (BQ_CHANGESETS_TABLE_ID, "changeset_id"),
-        (BQ_REVIEW_REQUESTS_TABLE_ID, "review_id"),
-        (BQ_COMMENTS_TABLE_ID, "comment_id"),
-        (BQ_TRANSACTIONS_TABLE_ID, "transaction_id"),
-        (BQ_REVIEW_GROUPS_TABLE_ID, "group_id"),
+    for target_table_id, id_column, updated_at_column in (
+        (BQ_REVISIONS_TABLE_ID, "revision_id", "date_modified"),
+        (BQ_DIFFS_TABLE_ID, "diff_id", "date_created"),
+        (BQ_CHANGESETS_TABLE_ID, "changeset_id", None),
+        (BQ_REVIEW_REQUESTS_TABLE_ID, "review_id", "date_modified"),
+        (BQ_COMMENTS_TABLE_ID, "comment_id", "date_created"),
+        (BQ_TRANSACTIONS_TABLE_ID, "transaction_id", "date_created"),
+        (BQ_REVIEW_GROUPS_TABLE_ID, "group_id", None),
     ):
         staging_table_id = sql_table_id(staging_tables[target_table_id])
         merge_into_bigquery(
@@ -822,6 +838,7 @@ def process():
             staging_table_id,
             id_column,
             target_tables,
+            updated_at_column,
         )
 
         delete_staging_table(bq_client, staging_table_id)
