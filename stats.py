@@ -114,7 +114,7 @@ class ProjectDb:
 
 @dataclass
 class RepoDb:
-    Repository = bases["repository"].classes.repository_uri
+    Repository = bases["repository"].classes.repository
 
 
 @dataclass
@@ -139,13 +139,15 @@ def get_last_review_id(revision_phid: str, sessions: Sessions) -> Optional[int]:
     return last_review.id if last_review else None
 
 
-def get_target_repository(repository_phid: str, sessions: Sessions) -> Optional[str]:
-    repository = (
+def get_target_repository(
+    repository_phid: str, sessions: Sessions
+) -> Optional[RepoDb.Repository]:
+    """Return the repository model object for a revision's target repository."""
+    return (
         sessions.repo.query(RepoDb.Repository)
-        .filter_by(repositoryPHID=repository_phid)
+        .filter_by(phid=repository_phid)
         .first()
     )
-    return repository.uri if repository else None
 
 
 def diff_phid_to_id(diff_phid: Optional[str], sessions: Sessions) -> Optional[int]:
@@ -520,6 +522,9 @@ def get_revision(
     projects_query: Any,
 ) -> dict[str, Any]:
     """Return a dict with transformed data for a revision."""
+    target_repo = get_target_repository(revision.repositoryPHID, sessions)
+    repo_details = json.loads(target_repo.details) if target_repo and target_repo.details else {}
+
     return {
         "bug_id": bug_id,
         "revision_id": revision.id,
@@ -530,7 +535,8 @@ def get_revision(
         "date_landed": date_landed,
         "last_review_id": get_last_review_id(revision.phid, sessions),
         "current_status": revision.status,
-        "target_repository": get_target_repository(revision.repositoryPHID, sessions),
+        "target_repository_name": target_repo.name if target_repo else None,
+        "target_repository_default_branch": repo_details.get("default-branch"),
         "stack_size": get_stack_size(
             revision, bug_id, all_revisions, bug_id_query, sessions
         ),
