@@ -115,6 +115,7 @@ class ProjectDb:
 @dataclass
 class RepoDb:
     Repository = bases["repository"].classes.repository
+    RepositoryURI = bases["repository"].classes.repository_uri
 
 
 @dataclass
@@ -148,6 +149,18 @@ def get_target_repository(
         .filter_by(phid=repository_phid)
         .first()
     )
+
+
+def get_target_repository_uri(
+    repository_phid: str, sessions: Sessions
+) -> Optional[str]:
+    """Return the URI for a revision's target repository."""
+    repository_uri = (
+        sessions.repo.query(RepoDb.RepositoryURI)
+        .filter_by(repositoryPHID=repository_phid)
+        .first()
+    )
+    return repository_uri.uri if repository_uri else None
 
 
 def diff_phid_to_id(diff_phid: Optional[str], sessions: Sessions) -> Optional[int]:
@@ -535,6 +548,7 @@ def get_revision(
         "date_landed": date_landed,
         "last_review_id": get_last_review_id(revision.phid, sessions),
         "current_status": revision.status,
+        "target_repository": get_target_repository_uri(revision.repositoryPHID, sessions),
         "target_repository_name": target_repo.name if target_repo else None,
         "target_repository_default_branch": repo_details.get("default-branch"),
         "stack_size": get_stack_size(
