@@ -5,6 +5,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import argparse
+import itertools
 import json
 import logging
 import os
@@ -668,6 +669,12 @@ def get_time_queries(
     return queries
 
 
+def revision_year_month(revision) -> tuple[int, int]:
+    """Return the (year, month) of a revision's `dateModified` timestamp."""
+    modified_date = datetime.fromtimestamp(revision.dateModified, tz=timezone.utc)
+    return (modified_date.year, modified_date.month)
+
+
 def staging_table_id(table_id: str) -> str:
     """Return a staging table ID for the given table ID."""
     return f"{table_id}_staging"
@@ -739,6 +746,31 @@ def delete_staging_table(bq_client: bigquery.Client, table_id: str):
     logging.info(f"Deleted table {table_id}.")
 
 
+def merge_staging_tables(
+    bq_client: bigquery.Client,
+    staging_tables: dict[str, bigquery.Table],
+    target_tables: dict[str, bigquery.Table],
+):
+    """Merge all staging tables into their corresponding target tables."""
+    for target_table_id, id_column, updated_at_column in (
+        (BQ_REVISIONS_TABLE_ID, "revision_id", "date_modified"),
+        (BQ_DIFFS_TABLE_ID, "diff_id", "date_created"),
+        (BQ_CHANGESETS_TABLE_ID, "changeset_id", None),
+        (BQ_REVIEW_REQUESTS_TABLE_ID, "review_id", "date_modified"),
+        (BQ_COMMENTS_TABLE_ID, "comment_id", "date_created"),
+        (BQ_TRANSACTIONS_TABLE_ID, "transaction_id", "date_created"),
+        (BQ_REVIEW_GROUPS_TABLE_ID, "group_id", None),
+    ):
+        merge_into_bigquery(
+            bq_client,
+            target_table_id,
+            sql_table_id(staging_tables[target_table_id]),
+            id_column,
+            target_tables,
+            updated_at_column,
+        )
+
+
 def submit_to_bigquery(
     bq_client: bigquery.Client,
     table: bigquery.Table,
@@ -771,6 +803,73 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def process_revision(
+    revision,
+    bq_client: bigquery.Client,
+    sessions: Sessions,
+    staging_tables: dict[str, bigquery.Table],
+    all_revisions,
+    bug_id_query,
+    projects_query,
+):
+    """Process a single revision and submit its data to BigQuery staging tables."""
+    logging.info(f"Processing revision D{revision.id}.")
+
+    phab_querying_start = time.perf_counter()
+
+    bug_id = get_bug_id(revision, bug_id_query)
+
+    diffs, changesets, date_landed = get_diffs_changesets(
+        revision,
+        sessions,
+    )
+
+    review_requests, date_approved = get_review_requests(revision, sessions)
+
+    revision_json = get_revision(
+        revision,
+        bug_id,
+        date_approved,
+        date_landed,
+        sessions,
+        all_revisions,
+        bug_id_query,
+        projects_query,
+    )
+
+    comments = get_comments(revision, sessions)
+
+    transactions = get_transactions(revision, sessions)
+
+    phab_gathering_time = round(time.perf_counter() - phab_querying_start, ndigits=2)
+    logging.info(
+        f"Gathered relevant info for D{revision.id} in {phab_gathering_time}s."
+    )
+
+    if DEBUG:
+        pprint.pprint(revision_json)
+        return
+
+    bigquery_insert_start = time.perf_counter()
+
+    # Send data to BigQuery staging tables.
+    for target_table_id, data in (
+        (BQ_REVISIONS_TABLE_ID, [revision_json]),
+        (BQ_DIFFS_TABLE_ID, diffs),
+        (BQ_CHANGESETS_TABLE_ID, changesets),
+        (BQ_REVIEW_REQUESTS_TABLE_ID, review_requests),
+        (BQ_COMMENTS_TABLE_ID, comments),
+        (BQ_TRANSACTIONS_TABLE_ID, transactions),
+    ):
+        submit_to_bigquery(bq_client, staging_tables[target_table_id], data)
+
+    bigquery_insert_time = round(time.perf_counter() - bigquery_insert_start, ndigits=2)
+    logging.info(
+        f"Submitted revision D{revision.id} in BigQuery staging "
+        f"in {bigquery_insert_time}s."
+    )
+
+
 def process():
     args = parse_args()
 
@@ -787,7 +886,11 @@ def process():
 
     time_queries = get_time_queries(now, bq_client, full=args.full)
 
-    updated_revisions = sessions.diff.query(DiffDb.Revision).filter(*time_queries)
+    updated_revisions = (
+        sessions.diff.query(DiffDb.Revision)
+        .filter(*time_queries)
+        .order_by(desc(DiffDb.Revision.dateModified))
+    )
     all_revisions = sessions.diff.query(DiffDb.Revision)
 
     projects_query = sessions.projects.query(ProjectDb.Project)
@@ -805,88 +908,28 @@ def process():
 
     logging.info(f"Found {updated_revisions.count()} revisions for processing.")
 
-    for revision in updated_revisions:
-        logging.info(f"Processing revision D{revision.id}.")
-
-        phab_querying_start = time.perf_counter()
-
-        bug_id = get_bug_id(revision, bug_id_query)
-
-        diffs, changesets, date_landed = get_diffs_changesets(
-            revision,
-            sessions,
-        )
-
-        review_requests, date_approved = get_review_requests(revision, sessions)
-
-        revision_json = get_revision(
-            revision,
-            bug_id,
-            date_approved,
-            date_landed,
-            sessions,
-            all_revisions,
-            bug_id_query,
-            projects_query,
-        )
-
-        comments = get_comments(revision, sessions)
-
-        transactions = get_transactions(revision, sessions)
-
-        phab_gathering_time = round(
-            time.perf_counter() - phab_querying_start, ndigits=2
-        )
-        logging.info(
-            f"Gathered relevant info for D{revision.id} in {phab_gathering_time}s."
-        )
-
-        if DEBUG:
-            pprint.pprint(revision_json)
-            continue
-
-        bigquery_insert_start = time.perf_counter()
-
-        # Send data to BigQuery staging tables.
-        for target_table_id, data in (
-            (BQ_REVISIONS_TABLE_ID, [revision_json]),
-            (BQ_DIFFS_TABLE_ID, diffs),
-            (BQ_CHANGESETS_TABLE_ID, changesets),
-            (BQ_REVIEW_REQUESTS_TABLE_ID, review_requests),
-            (BQ_COMMENTS_TABLE_ID, comments),
-            (BQ_TRANSACTIONS_TABLE_ID, transactions),
-        ):
-            submit_to_bigquery(bq_client, staging_tables[target_table_id], data)
-
-        bigquery_insert_time = round(
-            time.perf_counter() - bigquery_insert_start, ndigits=2
-        )
-        logging.info(
-            f"Submitted revision D{revision.id} in BigQuery staging "
-            f"in {bigquery_insert_time}s."
-        )
-
-    # Merge staging table changes into target tables.
-    for target_table_id, id_column, updated_at_column in (
-        (BQ_REVISIONS_TABLE_ID, "revision_id", "date_modified"),
-        (BQ_DIFFS_TABLE_ID, "diff_id", "date_created"),
-        (BQ_CHANGESETS_TABLE_ID, "changeset_id", None),
-        (BQ_REVIEW_REQUESTS_TABLE_ID, "review_id", "date_modified"),
-        (BQ_COMMENTS_TABLE_ID, "comment_id", "date_created"),
-        (BQ_TRANSACTIONS_TABLE_ID, "transaction_id", "date_created"),
-        (BQ_REVIEW_GROUPS_TABLE_ID, "group_id", None),
+    for (year, month), revisions in itertools.groupby(
+        updated_revisions, key=revision_year_month
     ):
-        staging_table_id = sql_table_id(staging_tables[target_table_id])
-        merge_into_bigquery(
-            bq_client,
-            target_table_id,
-            staging_table_id,
-            id_column,
-            target_tables,
-            updated_at_column,
-        )
+        logging.info(f"Processing revisions for {year}-{month:02d}.")
 
-        delete_staging_table(bq_client, staging_table_id)
+        for revision in revisions:
+            process_revision(
+                revision,
+                bq_client,
+                sessions,
+                staging_tables,
+                all_revisions,
+                bug_id_query,
+                projects_query,
+            )
+
+        logging.info(f"Finished processing {year}-{month:02d}, merging staging tables.")
+        merge_staging_tables(bq_client, staging_tables, target_tables)
+
+    # Clean up staging tables.
+    for target_table_id in staging_tables:
+        delete_staging_table(bq_client, sql_table_id(staging_tables[target_table_id]))
 
 
 if __name__ == "__main__":
