@@ -4,6 +4,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import argparse
 import json
 import logging
 import os
@@ -145,9 +146,7 @@ def get_target_repository(
 ) -> Optional[RepoDb.Repository]:
     """Return the repository model object for a revision's target repository."""
     return (
-        sessions.repo.query(RepoDb.Repository)
-        .filter_by(phid=repository_phid)
-        .first()
+        sessions.repo.query(RepoDb.Repository).filter_by(phid=repository_phid).first()
     )
 
 
@@ -536,7 +535,9 @@ def get_revision(
 ) -> dict[str, Any]:
     """Return a dict with transformed data for a revision."""
     target_repo = get_target_repository(revision.repositoryPHID, sessions)
-    repo_details = json.loads(target_repo.details) if target_repo and target_repo.details else {}
+    repo_details = (
+        json.loads(target_repo.details) if target_repo and target_repo.details else {}
+    )
 
     return {
         "bug_id": bug_id,
@@ -548,7 +549,9 @@ def get_revision(
         "date_landed": date_landed,
         "last_review_id": get_last_review_id(revision.phid, sessions),
         "current_status": revision.status,
-        "target_repository": get_target_repository_uri(revision.repositoryPHID, sessions),
+        "target_repository": get_target_repository_uri(
+            revision.repositoryPHID, sessions
+        ),
         "target_repository_name": target_repo.name if target_repo else None,
         "target_repository_default_branch": repo_details.get("default-branch"),
         "stack_size": get_stack_size(
@@ -558,19 +561,19 @@ def get_revision(
     }
 
 
-
 def convert_value_to_string(value):
     """Coerce transaction values to string.
-    
-    If the passed value is a boolean, then we convert it to the string 
+
+    If the passed value is a boolean, then we convert it to the string
     "1" or "0". Otherwise we return it as a string.
     """
     if isinstance(value, bool):
         # "1" for True, "0" for False
         return str(int(value))
-    
+
     # fallback: convert everything else to string
-    return str(value)  
+    return str(value)
+
 
 def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
     """Get the timestamp of the most recently added entry in BigQuery.
@@ -623,7 +626,9 @@ def create_staging_tables(
     }
 
 
-def get_time_queries(now: datetime, bq_client: bigquery.Client) -> list:
+def get_time_queries(
+    now: datetime, bq_client: bigquery.Client, full: bool = False
+) -> list:
     """
     Dont take the revisions created or modified after the start of the run
     Dont take the revisions created before the last run
@@ -634,6 +639,11 @@ def get_time_queries(now: datetime, bq_client: bigquery.Client) -> list:
             DiffDb.Revision.dateModified < now.timestamp(),
         ),
     ]
+
+    if full:
+        logging.info("Full mode enabled, processing all revisions from the beginning.")
+        return queries
+
     last_run_datetime = get_last_run_timestamp(bq_client)
 
     if last_run_datetime:
@@ -748,7 +758,22 @@ def submit_to_bigquery(
             sys.exit(1)
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Phabricator ETL: extract revision data and load into BigQuery."
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Process all revisions since the beginning, ignoring the last run timestamp.",
+    )
+    return parser.parse_args()
+
+
 def process():
+    args = parse_args()
+
     now = datetime.now()
 
     logging.info(f"Starting Phab-ETL with timestamp {now}.")
@@ -760,7 +785,7 @@ def process():
     target_tables = load_bigquery_tables(bq_client)
     staging_tables = create_staging_tables(bq_client, target_tables)
 
-    time_queries = get_time_queries(now, bq_client)
+    time_queries = get_time_queries(now, bq_client, full=args.full)
 
     updated_revisions = sessions.diff.query(DiffDb.Revision).filter(*time_queries)
     all_revisions = sessions.diff.query(DiffDb.Revision)
