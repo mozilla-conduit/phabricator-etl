@@ -740,6 +740,22 @@ def merge_into_bigquery(
     logging.info(f"Merged staging table for {table_id}.")
 
 
+def truncate_staging_table(bq_client: bigquery.Client, table_id: str):
+    """Remove all rows from the staging table."""
+    truncate_job = bq_client.query(f"TRUNCATE TABLE `{table_id}`")
+    truncate_job.result()
+    logging.info(f"Truncated staging table `{table_id}`.")
+
+
+def truncate_staging_tables(
+    bq_client: bigquery.Client,
+    staging_tables: dict[str, bigquery.Table],
+):
+    """Truncate all staging tables to avoid re-merging stale data."""
+    for target_table_id in staging_tables:
+        truncate_staging_table(bq_client, sql_table_id(staging_tables[target_table_id]))
+
+
 def delete_staging_table(bq_client: bigquery.Client, table_id: str):
     """Delete the table with given ID."""
     bq_client.delete_table(table_id)
@@ -926,6 +942,7 @@ def process():
 
         logging.info(f"Finished processing {year}-{month:02d}, merging staging tables.")
         merge_staging_tables(bq_client, staging_tables, target_tables)
+        truncate_staging_tables(bq_client, staging_tables)
 
     # Clean up staging tables.
     for target_table_id in staging_tables:
