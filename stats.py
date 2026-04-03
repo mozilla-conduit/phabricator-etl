@@ -742,6 +742,11 @@ def merge_into_bigquery(
 
 def truncate_staging_table(bq_client: bigquery.Client, table_id: str):
     """Remove all rows from the staging table."""
+    if not table_id.endswith("_staging"):
+        raise ValueError(
+            f"Refusing to truncate `{table_id}`: table ID must end with `_staging`."
+        )
+
     truncate_job = bq_client.query(f"TRUNCATE TABLE `{table_id}`")
     truncate_job.result()
     logging.info(f"Truncated staging table `{table_id}`.")
