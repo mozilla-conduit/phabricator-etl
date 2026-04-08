@@ -918,8 +918,7 @@ def process():
 
     bug_id_query = sessions.diff.query(DiffDb.CustomFieldStorage).filter(
         # TODO I got this value from the DB, what is it?
-        DiffDb.CustomFieldStorage.fieldIndex
-        == b"zdMFYM6423ua"
+        DiffDb.CustomFieldStorage.fieldIndex == b"zdMFYM6423ua"
     )
 
     review_groups = get_review_groups(sessions)

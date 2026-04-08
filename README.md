@@ -10,4 +10,16 @@ Requires Python 3 and the MySQL Client libraries.
 
 ### Python
 
-Create a virtual environment or similar (eg. `python3 -m venv venv`) then use pip to install the dependencies: `pip install -r requirements.txt`
+This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
+
+Install dependencies:
+
+```shell
+uv sync
+```
+
+To include dev dependencies (linting, testing, etc.):
+
+```shell
+uv sync --group dev
+```

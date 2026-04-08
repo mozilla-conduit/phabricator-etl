@@ -1,0 +1,26 @@
+[project]
+name = "phabricator-etl"
+version = "0.1.0"
+description = "Extract Phabricator revision data and load into BigQuery."
+license = "MPL-2.0"
+requires-python = ">=3.9"
+dependencies = [
+    "SQLAlchemy>=2.0.30,<3",
+    "PyMySQL>=1.1.1,<2",
+    "mysqlclient>=2.2.4,<3",
+    "google-cloud-bigquery>=3.25.0,<4",
+    "more-itertools>=10.5.0,<11",
+]
+
+[project.scripts]
+phabricator-etl = "phabricator_etl.stats:process"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.5.5",
+    "pytest>=8.0",
+]
