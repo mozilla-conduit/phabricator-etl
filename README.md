@@ -23,3 +23,11 @@ To include dev dependencies (linting, testing, etc.):
 ```shell
 uv sync --group dev
 ```
+
+## Testing
+
+Run the test suite with:
+
+```shell
+uv run pytest
+```
