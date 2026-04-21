@@ -52,6 +52,7 @@ STATE_CHANGE_TYPES = [
     "differential.revision.reopen",
     "differential.revision.request",
     "differential.revision.resign",
+    "differential.revision.reviewers",
     "differential.revision.status",
     "differential.revision.void",
     "differential.revision.wrong",
@@ -290,6 +291,18 @@ def get_user_name(author_phid: str, sessions: Sessions) -> Optional[str]:
         return None
 
 
+def get_project_name(project_phid: str, sessions: Sessions) -> Optional[str]:
+    try:
+        project = (
+            sessions.projects.query(ProjectDb.Project)
+            .filter_by(phid=project_phid)
+            .one()
+        )
+        return project.name
+    except NoResultFound:
+        return None
+
+
 def get_user_email(author_phid: str, sessions: Sessions) -> Optional[str]:
     try:
         user_email = (
@@ -314,12 +327,7 @@ def get_review_requests(
     ):
         is_reviewer_group = review.reviewerPHID.startswith(b"PHID-PROJ-")
         if is_reviewer_group:
-            reviewer = (
-                sessions.projects.query(ProjectDb.Project)
-                .filter_by(phid=review.reviewerPHID)
-                .one()
-            )
-            reviewer_username = reviewer.name
+            reviewer_username = get_project_name(review.reviewerPHID, sessions)
             reviewer_email = None
         else:
             reviewer_username = get_user_name(review.reviewerPHID, sessions)
@@ -469,9 +477,18 @@ def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict
             "author_email": get_user_email(transaction.authorPHID, sessions),
             "author_username": get_user_name(transaction.authorPHID, sessions),
             "date_created": transaction.dateCreated,
-            "old_value": convert_value_to_string(transaction.oldValue),
-            "new_value": convert_value_to_string(transaction.newValue),
         }
+
+        if transaction.transactionType == "differential.revision.reviewers":
+            transaction_obj["old_value"] = convert_json_to_string(
+                transaction.oldValue, sessions
+            )
+            transaction_obj["new_value"] = convert_json_to_string(
+                transaction.newValue, sessions
+            )
+        else:
+            transaction_obj["old_value"] = convert_value_to_string(transaction.oldValue)
+            transaction_obj["new_value"] = convert_value_to_string(transaction.newValue)
 
         transactions.append(transaction_obj)
 
@@ -574,6 +591,29 @@ def convert_value_to_string(value):
 
     # fallback: convert everything else to string
     return str(value)
+
+
+def convert_json_to_string(value: Any, sessions: Sessions) -> str:
+    """Convert a JSON-encoded PHID map to a comma-separated string of names.
+
+    Handles the "differential.revision.reviewers" transaction type, where old/new values
+    are dicts mapping reviewer PHIDs to their status. Only keys are used; values are ignored.
+    Falls back to convert_value_to_string if the value is not a valid JSON dict.
+    """
+    try:
+        phid_map = json.loads(value)
+        if isinstance(phid_map, dict):
+            names = [
+                get_project_name(phid, sessions)
+                if phid.startswith("PHID-PROJ-")
+                else get_user_name(phid, sessions)
+                for phid in phid_map.keys()
+            ]
+            return ", ".join(name for name in names if name is not None)
+        else:
+            return convert_value_to_string(value)
+    except (json.JSONDecodeError, TypeError):
+        return convert_value_to_string(value)
 
 
 def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
