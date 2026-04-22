@@ -283,27 +283,35 @@ def get_stack_size(
     return len(stack)
 
 
-def get_user_name(author_phid: str, sessions: Sessions) -> Optional[str]:
-    try:
-        user = sessions.users.query(UserDb.User).filter_by(phid=author_phid).one()
-        return user.userName
-    except NoResultFound:
-        return None
+_user_name_cache: dict[str | bytes, Optional[str]] = {}
+_project_name_cache: dict[str | bytes, Optional[str]] = {}
 
 
-def get_project_name(project_phid: str, sessions: Sessions) -> Optional[str]:
-    try:
-        project = (
-            sessions.projects.query(ProjectDb.Project)
-            .filter_by(phid=project_phid)
-            .one()
-        )
-        return project.name
-    except NoResultFound:
-        return None
+def get_user_name(author_phid: str | bytes, sessions: Sessions) -> Optional[str]:
+    if author_phid not in _user_name_cache:
+        try:
+            user = sessions.users.query(UserDb.User).filter_by(phid=author_phid).one()
+            _user_name_cache[author_phid] = user.userName
+        except NoResultFound:
+            _user_name_cache[author_phid] = None
+    return _user_name_cache[author_phid]
 
 
-def get_user_email(author_phid: str, sessions: Sessions) -> Optional[str]:
+def get_project_name(project_phid: str | bytes, sessions: Sessions) -> Optional[str]:
+    if project_phid not in _project_name_cache:
+        try:
+            project = (
+                sessions.projects.query(ProjectDb.Project)
+                .filter_by(phid=project_phid)
+                .one()
+            )
+            _project_name_cache[project_phid] = project.name
+        except NoResultFound:
+            _project_name_cache[project_phid] = None
+    return _project_name_cache[project_phid]
+
+
+def get_user_email(author_phid: str | bytes, sessions: Sessions) -> Optional[str]:
     try:
         user_email = (
             sessions.users.query(UserDb.UserEmail)
@@ -604,9 +612,9 @@ def convert_json_to_string(value: Any, sessions: Sessions) -> str:
         phid_map = json.loads(value)
         if isinstance(phid_map, dict):
             names = [
-                get_project_name(phid, sessions)
+                get_project_name(phid.encode("utf-8"), sessions)
                 if phid.startswith("PHID-PROJ-")
-                else get_user_name(phid, sessions)
+                else get_user_name(phid.encode("utf-8"), sessions)
                 for phid in phid_map.keys()
             ]
             return ", ".join(name for name in names if name is not None)
