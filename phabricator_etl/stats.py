@@ -4,9 +4,10 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+from __future__ import annotations
+
 import argparse
 import itertools
-import json
 import logging
 import os
 import pprint
@@ -15,7 +16,8 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import IntEnum
-from typing import Optional, Any
+from types import SimpleNamespace
+from typing import Any, Optional
 
 import sqlalchemy
 from google.cloud import bigquery
@@ -26,22 +28,18 @@ from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
 
-BQ_REVISIONS_TABLE_ID = os.environ["BQ_REVISIONS_TABLE_ID"]
-BQ_DIFFS_TABLE_ID = os.environ["BQ_DIFFS_TABLE_ID"]
-BQ_CHANGESETS_TABLE_ID = os.environ["BQ_CHANGESETS_TABLE_ID"]
-BQ_COMMENTS_TABLE_ID = os.environ["BQ_COMMENTS_TABLE_ID"]
-BQ_REVIEW_REQUESTS_TABLE_ID = os.environ["BQ_REVIEW_REQUESTS_TABLE_ID"]
-BQ_TRANSACTIONS_TABLE_ID = os.environ["BQ_TRANSACTIONS_TABLE_ID"]
-BQ_REVIEW_GROUPS_TABLE_ID = os.environ["BQ_REVIEW_GROUPS_TABLE_ID"]
+from phabricator_etl.transforms import (
+    latest_approved_date,
+    latest_landed_date,
+    parse_repository_details,
+    should_include_diff,
+    transform_changeset_dict,
+    transform_comment_dict,
+    transform_review_dict,
+    transform_transaction_dict,
+)
 
-DEBUG = "DEBUG" in os.environ
-PHAB_DB_URL = os.environ.get("PHAB_URL", "127.0.0.1")
-PHAB_DB_NAMESPACE = os.environ.get("PHAB_NAMESPACE", "bitnami_phabricator")
-PHAB_DB_PORT = os.environ.get("PHAB_PORT", "3307")
-PHAB_DB_USER = os.environ.get("PHAB_USER", "root")
-PHAB_DB_TOKEN = os.environ["PHAB_TOKEN"]
-
-# Transaction types we care about for tracking state changes
+# Differential transaction types tracked in the transactions table.
 STATE_CHANGE_TYPES = [
     "differential.revision.abandon",
     "differential.revision.accept",
@@ -57,7 +55,6 @@ STATE_CHANGE_TYPES = [
     "differential.revision.wrong",
 ]
 
-# Configure simple logging.
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] - {%(filename)s:%(lineno)d} %(levelname)s - %(message)s",
@@ -65,18 +62,64 @@ logging.basicConfig(
 )
 
 
-def create_engine(table_suffix: str) -> Engine:
-    return sqlalchemy.create_engine(
-        f"mysql+mysqldb://{PHAB_DB_USER}:{PHAB_DB_TOKEN}@{PHAB_DB_URL}:{PHAB_DB_PORT}/{PHAB_DB_NAMESPACE}_{table_suffix}"
+@dataclass(frozen=True)
+class Config:
+    """Runtime configuration sourced from the environment."""
+
+    bq_revisions_table_id: str
+    bq_diffs_table_id: str
+    bq_changesets_table_id: str
+    bq_comments_table_id: str
+    bq_review_requests_table_id: str
+    bq_transactions_table_id: str
+    bq_review_groups_table_id: str
+
+    phab_db_url: str
+    phab_db_namespace: str
+    phab_db_port: str
+    phab_db_user: str
+    phab_db_token: str
+
+    debug: bool
+
+
+def get_config() -> Config:
+    """Read the environment and return the resolved `Config`.
+
+    Called once per run by `process`; the result is threaded through
+    the rest of the codebase as an explicit parameter.
+    """
+    return Config(
+        bq_revisions_table_id=os.environ["BQ_REVISIONS_TABLE_ID"],
+        bq_diffs_table_id=os.environ["BQ_DIFFS_TABLE_ID"],
+        bq_changesets_table_id=os.environ["BQ_CHANGESETS_TABLE_ID"],
+        bq_comments_table_id=os.environ["BQ_COMMENTS_TABLE_ID"],
+        bq_review_requests_table_id=os.environ["BQ_REVIEW_REQUESTS_TABLE_ID"],
+        bq_transactions_table_id=os.environ["BQ_TRANSACTIONS_TABLE_ID"],
+        bq_review_groups_table_id=os.environ["BQ_REVIEW_GROUPS_TABLE_ID"],
+        phab_db_url=os.environ.get("PHAB_URL", "127.0.0.1"),
+        phab_db_namespace=os.environ.get("PHAB_NAMESPACE", "bitnami_phabricator"),
+        phab_db_port=os.environ.get("PHAB_PORT", "3307"),
+        phab_db_user=os.environ.get("PHAB_USER", "root"),
+        phab_db_token=os.environ["PHAB_TOKEN"],
+        debug="DEBUG" in os.environ,
     )
 
 
-def create_engines() -> dict[str, Engine]:
+def create_engine(config: Config, table_suffix: str) -> Engine:
+    return sqlalchemy.create_engine(
+        f"mysql+mysqldb://{config.phab_db_user}:{config.phab_db_token}"
+        f"@{config.phab_db_url}:{config.phab_db_port}"
+        f"/{config.phab_db_namespace}_{table_suffix}"
+    )
+
+
+def create_engines(config: Config) -> dict[str, Engine]:
     return {
-        "user": create_engine("user"),
-        "project": create_engine("project"),
-        "repository": create_engine("repository"),
-        "differential": create_engine("differential"),
+        "user": create_engine(config, "user"),
+        "project": create_engine(config, "project"),
+        "repository": create_engine(config, "repository"),
+        "differential": create_engine(config, "differential"),
     }
 
 
@@ -89,52 +132,73 @@ def prepare_bases(engines: dict[str, Engine]) -> dict[str, Any]:
     return bases
 
 
-engines = create_engines()
-bases = prepare_bases(engines)
+@dataclass(frozen=True)
+class Db:
+    """ORM-class namespaces, one per Phabricator database."""
+
+    user: SimpleNamespace
+    project: SimpleNamespace
+    repo: SimpleNamespace
+    diff: SimpleNamespace
+
+    @classmethod
+    def from_bases(cls, bases: dict[str, Any]) -> Db:
+        user_classes = bases["user"].classes
+        project_classes = bases["project"].classes
+        repo_classes = bases["repository"].classes
+        diff_classes = bases["differential"].classes
+        return cls(
+            user=SimpleNamespace(
+                User=user_classes.user,
+                UserEmail=user_classes.user_email,
+            ),
+            project=SimpleNamespace(
+                Project=project_classes.project,
+                Edges=project_classes.edge,
+            ),
+            repo=SimpleNamespace(
+                Repository=repo_classes.repository,
+                RepositoryURI=repo_classes.repository_uri,
+            ),
+            diff=SimpleNamespace(
+                Revision=diff_classes.differential_revision,
+                Differential=diff_classes.differential_diff,
+                Changeset=diff_classes.differential_changeset,
+                Transaction=diff_classes.differential_transaction,
+                TransactionComment=diff_classes.differential_transaction_comment,
+                Reviewer=diff_classes.differential_reviewer,
+                Edges=diff_classes.edge,
+                CustomFieldStorage=diff_classes.differential_customfieldstorage,
+            ),
+        )
 
 
+@dataclass
 class Sessions:
-    """Container for all required Phabricator DB sessions."""
+    """SQLAlchemy sessions and ORM-class namespaces for the four Phab databases."""
 
-    users = Session(engines["user"])
-    projects = Session(engines["project"])
-    repo = Session(engines["repository"])
-    diff = Session(engines["differential"])
+    users: Session
+    projects: Session
+    repo: Session
+    diff: Session
+    db: Db
 
-
-@dataclass
-class UserDb:
-    User = bases["user"].classes.user
-    UserEmail = bases["user"].classes.user_email
-
-
-@dataclass
-class ProjectDb:
-    Project = bases["project"].classes.project
-    Edges = bases["project"].classes.edge
-
-
-@dataclass
-class RepoDb:
-    Repository = bases["repository"].classes.repository
-    RepositoryURI = bases["repository"].classes.repository_uri
-
-
-@dataclass
-class DiffDb:
-    Revision = bases["differential"].classes.differential_revision
-    Differential = bases["differential"].classes.differential_diff
-    Changeset = bases["differential"].classes.differential_changeset
-    Transaction = bases["differential"].classes.differential_transaction
-    TransactionComment = bases["differential"].classes.differential_transaction_comment
-    Reviewer = bases["differential"].classes.differential_reviewer
-    Edges = bases["differential"].classes.edge
-    CustomFieldStorage = bases["differential"].classes.differential_customfieldstorage
+    @classmethod
+    def from_config(cls, config: Config) -> Sessions:
+        engines = create_engines(config)
+        bases = prepare_bases(engines)
+        return cls(
+            users=Session(engines["user"]),
+            projects=Session(engines["project"]),
+            repo=Session(engines["repository"]),
+            diff=Session(engines["differential"]),
+            db=Db.from_bases(bases),
+        )
 
 
 def get_last_review_id(revision_phid: str, sessions: Sessions) -> Optional[int]:
     last_review = (
-        sessions.diff.query(DiffDb.Reviewer)
+        sessions.diff.query(sessions.db.diff.Reviewer)
         .filter_by(revisionPHID=revision_phid)
         .order_by(desc("dateModified"))
         .first()
@@ -142,12 +206,12 @@ def get_last_review_id(revision_phid: str, sessions: Sessions) -> Optional[int]:
     return last_review.id if last_review else None
 
 
-def get_target_repository(
-    repository_phid: str, sessions: Sessions
-) -> Optional[RepoDb.Repository]:
+def get_target_repository(repository_phid: str, sessions: Sessions) -> Optional[Any]:
     """Return the repository model object for a revision's target repository."""
     return (
-        sessions.repo.query(RepoDb.Repository).filter_by(phid=repository_phid).first()
+        sessions.repo.query(sessions.db.repo.Repository)
+        .filter_by(phid=repository_phid)
+        .first()
     )
 
 
@@ -156,7 +220,7 @@ def get_target_repository_uri(
 ) -> Optional[str]:
     """Return the URI for a revision's target repository."""
     repository_uri = (
-        sessions.repo.query(RepoDb.RepositoryURI)
+        sessions.repo.query(sessions.db.repo.RepositoryURI)
         .filter_by(repositoryPHID=repository_phid)
         .first()
     )
@@ -167,7 +231,11 @@ def diff_phid_to_id(diff_phid: Optional[str], sessions: Sessions) -> Optional[in
     if diff_phid is None:
         return None
 
-    diff = sessions.diff.query(DiffDb.Differential).filter_by(phid=diff_phid).one()
+    diff = (
+        sessions.diff.query(sessions.db.diff.Differential)
+        .filter_by(phid=diff_phid)
+        .one()
+    )
 
     return diff.id
 
@@ -178,14 +246,16 @@ def get_diff_id_for_changeset(
     if changeset_id is None:
         return None
 
-    changeset = sessions.diff.query(DiffDb.Changeset).filter_by(id=changeset_id).one()
+    changeset = (
+        sessions.diff.query(sessions.db.diff.Changeset).filter_by(id=changeset_id).one()
+    )
 
     return changeset.diffID
 
 
-def get_bug_id(revision: DiffDb.Revision, bug_id_query) -> Optional[int]:
+def get_bug_id(revision: Any, sessions: Sessions, bug_id_query: Any) -> Optional[int]:
     bug_id_query_result = bug_id_query.filter(
-        DiffDb.CustomFieldStorage.objectPHID == revision.phid
+        sessions.db.diff.CustomFieldStorage.objectPHID == revision.phid
     ).one_or_none()
 
     if not bug_id_query_result:
@@ -195,7 +265,7 @@ def get_bug_id(revision: DiffDb.Revision, bug_id_query) -> Optional[int]:
 
 
 class PhabricatorEdgeConstant(IntEnum):
-    """Enumeration of project edge constants."""
+    """Phabricator `edge.type` constants used to walk project/dependency graphs."""
 
     DEPENDS_ON = 5
     DEPENDED_ON = 6
@@ -206,24 +276,23 @@ class PhabricatorEdgeConstant(IntEnum):
 def get_revision_projects(
     revision: Any, sessions: Sessions, projects_query: Any
 ) -> list[str]:
-    """Return the project tags associated with a revision."""
-    # Get all edges between the revision and a project.
+    """Return the project tag slugs associated with a revision."""
     edge_query_result = (
-        sessions.diff.query(DiffDb.Edges)
+        sessions.diff.query(sessions.db.diff.Edges)
         .filter(
-            DiffDb.Edges.src == revision.phid,
-            DiffDb.Edges.type == PhabricatorEdgeConstant.OBJECT_HAS_PROJECT.value,
+            sessions.db.diff.Edges.src == revision.phid,
+            sessions.db.diff.Edges.type
+            == PhabricatorEdgeConstant.OBJECT_HAS_PROJECT.value,
         )
         .all()
     )
 
-    # Get the PHID of each project (the destination on the edge).
     project_phids = {edge.dst for edge in edge_query_result}
 
-    # Get the project objects for the set of PHIDs.
-    projects = projects_query.filter(ProjectDb.Project.phid.in_(project_phids)).all()
+    projects = projects_query.filter(
+        sessions.db.project.Project.phid.in_(project_phids)
+    ).all()
 
-    # Convert the project PHID to the slug (name).
     return [project.primarySlug for project in projects]
 
 
@@ -234,7 +303,7 @@ def get_stack_size(
     bug_id_query: Any,
     sessions: Sessions,
 ) -> int:
-    # The stack size is always 1 for stacks without a bug ID.
+    # Stacks without a bug ID have no detectable cross-revision links.
     if not bug_id:
         return 1
 
@@ -242,12 +311,14 @@ def get_stack_size(
     neighbors = {revision.phid}
 
     while neighbors:
-        # Query for all edges related to the current set of neighbors.
         edge_query_result = (
-            sessions.diff.query(DiffDb.Edges)
+            sessions.diff.query(sessions.db.diff.Edges)
             .filter(
-                or_(DiffDb.Edges.src.in_(neighbors), DiffDb.Edges.dst.in_(neighbors)),
-                DiffDb.Edges.type.in_(
+                or_(
+                    sessions.db.diff.Edges.src.in_(neighbors),
+                    sessions.db.diff.Edges.dst.in_(neighbors),
+                ),
+                sessions.db.diff.Edges.type.in_(
                     [
                         PhabricatorEdgeConstant.DEPENDS_ON.value,
                         PhabricatorEdgeConstant.DEPENDED_ON.value,
@@ -257,26 +328,19 @@ def get_stack_size(
             .all()
         )
 
-        # Create an empty list of revisions that have this as the bug.
         bug_matching_revlist = []
-        # For each edge related to our current set of neighbors.
         for edge in edge_query_result:
-            # For each end of the edge.
             for node_phid in (edge.src, edge.dst):
-                # Get the revision from the set of revisions.
                 for rev in all_revisions.filter_by(phid=node_phid):
-                    # Get the bug ID for the neighbor.
-                    neighbor_bug_id = get_bug_id(rev, bug_id_query)
+                    neighbor_bug_id = get_bug_id(rev, sessions, bug_id_query)
                     if not neighbor_bug_id:
                         continue
 
                     if neighbor_bug_id == bug_id:
                         bug_matching_revlist.append(rev.phid)
 
-        # Add neighbors to the stack.
         stack.update(neighbors)
 
-        # Re-set neighbors to just the items in the bug match revlist that aren't in the stack.
         neighbors = set(bug_matching_revlist) - stack
 
     return len(stack)
@@ -284,7 +348,11 @@ def get_stack_size(
 
 def get_user_name(author_phid: str, sessions: Sessions) -> Optional[str]:
     try:
-        user = sessions.users.query(UserDb.User).filter_by(phid=author_phid).one()
+        user = (
+            sessions.users.query(sessions.db.user.User)
+            .filter_by(phid=author_phid)
+            .one()
+        )
         return user.userName
     except NoResultFound:
         return None
@@ -293,7 +361,7 @@ def get_user_name(author_phid: str, sessions: Sessions) -> Optional[str]:
 def get_user_email(author_phid: str, sessions: Sessions) -> Optional[str]:
     try:
         user_email = (
-            sessions.users.query(UserDb.UserEmail)
+            sessions.users.query(sessions.db.user.UserEmail)
             .filter_by(userPHID=author_phid, isPrimary=1)
             .one()
         )
@@ -303,19 +371,21 @@ def get_user_email(author_phid: str, sessions: Sessions) -> Optional[str]:
 
 
 def get_review_requests(
-    revision: DiffDb.Revision,
+    revision: Any,
     sessions: Sessions,
 ) -> tuple[list[dict], Optional[int]]:
-    review_requests = []
-    date_approved = None
+    reviews = list(
+        sessions.diff.query(sessions.db.diff.Reviewer).filter_by(
+            revisionPHID=revision.phid
+        )
+    )
 
-    for review in sessions.diff.query(DiffDb.Reviewer).filter_by(
-        revisionPHID=revision.phid
-    ):
+    review_requests = []
+    for review in reviews:
         is_reviewer_group = review.reviewerPHID.startswith(b"PHID-PROJ-")
         if is_reviewer_group:
             reviewer = (
-                sessions.projects.query(ProjectDb.Project)
+                sessions.projects.query(sessions.db.project.Project)
                 .filter_by(phid=review.reviewerPHID)
                 .one()
             )
@@ -325,94 +395,77 @@ def get_review_requests(
             reviewer_username = get_user_name(review.reviewerPHID, sessions)
             reviewer_email = get_user_email(review.reviewerPHID, sessions)
 
-        # Set `date_approved` as the latest `accepted` review modified time.
-        if review.reviewerStatus == "accepted" and (
-            not date_approved or date_approved < review.dateModified
-        ):
-            date_approved = review.dateModified
+        review_requests.append(
+            transform_review_dict(
+                review=review,
+                revision_id=revision.id,
+                reviewer_username=reviewer_username,
+                reviewer_email=reviewer_email,
+                is_group=is_reviewer_group,
+                last_action_diff_id=diff_phid_to_id(
+                    review.lastActionDiffPHID, sessions
+                ),
+                last_comment_diff_id=diff_phid_to_id(
+                    review.lastCommentDiffPHID, sessions
+                ),
+            )
+        )
 
-        review_obj = {
-            "revision_id": revision.id,
-            "review_id": review.id,
-            "reviewer_username": reviewer_username,
-            "reviewer_email": reviewer_email,
-            "is_group": is_reviewer_group,
-            "date_created": review.dateCreated,
-            "date_modified": review.dateModified,
-            "status": review.reviewerStatus,
-            "last_action_diff_id": diff_phid_to_id(review.lastActionDiffPHID, sessions),
-            "last_comment_diff_id": diff_phid_to_id(
-                review.lastCommentDiffPHID, sessions
-            ),
-        }
-
-        review_requests.append(review_obj)
-
-    return review_requests, date_approved
+    return review_requests, latest_approved_date(reviews)
 
 
 def get_diffs_changesets(
-    revision: DiffDb.Revision,
+    revision: Any,
     sessions: Sessions,
 ) -> tuple[list[dict], list[dict], Optional[int]]:
+    all_diffs = list(
+        sessions.diff.query(sessions.db.diff.Differential).filter_by(
+            revisionID=revision.id
+        )
+    )
+
     diffs = []
     changesets = []
-    date_landed = None
-    for diff in sessions.diff.query(DiffDb.Differential).filter_by(
-        revisionID=revision.id
-    ):
-        if diff.creationMethod == "commit":
-            # Set `date_landed` as the latest `commit` diff creation time.
-            if not date_landed or date_landed < diff.dateCreated:
-                date_landed = diff.dateCreated
-
+    for diff in all_diffs:
+        if not should_include_diff(diff):
             continue
 
-        if diff.authorPHID.startswith(b"PHID-RIDT-"):
-            # Ignore diffs that were created with repository identity.
-            continue
-
-        diff_obj = {
-            "creation_method": diff.creationMethod,
-            "diff_id": diff.id,
-            "revision_id": revision.id,
-            "date_created": diff.dateCreated,
-            "author_email": get_user_email(diff.authorPHID, sessions),
-            "author_username": get_user_name(diff.authorPHID, sessions),
-        }
-
-        diffs.append(diff_obj)
+        diffs.append(
+            {
+                "creation_method": diff.creationMethod,
+                "diff_id": diff.id,
+                "revision_id": revision.id,
+                "date_created": diff.dateCreated,
+                "author_email": get_user_email(diff.authorPHID, sessions),
+                "author_username": get_user_name(diff.authorPHID, sessions),
+            }
+        )
         changesets.extend(get_changesets(revision, diff, sessions))
 
-    return diffs, changesets, date_landed
+    return diffs, changesets, latest_landed_date(all_diffs)
 
 
-def get_changesets(
-    revision: DiffDb.Revision, diff: DiffDb.Differential, sessions: Sessions
-) -> list[dict]:
-    changesets = []
-    for changeset in sessions.diff.query(DiffDb.Changeset).filter_by(diffID=diff.id):
-        changeset_obj = {
-            "revision_id": revision.id,
-            "diff_id": diff.id,
-            "changeset_id": changeset.id,
-            "lines_added": changeset.addLines,
-            "lines_removed": changeset.delLines,
-            "filename": changeset.filename.decode("utf-8"),
-        }
-
-        changesets.append(changeset_obj)
-
-    return changesets
+def get_changesets(revision: Any, diff: Any, sessions: Sessions) -> list[dict]:
+    return [
+        transform_changeset_dict(
+            changeset=changeset,
+            revision_id=revision.id,
+            diff_id=diff.id,
+        )
+        for changeset in sessions.diff.query(sessions.db.diff.Changeset).filter_by(
+            diffID=diff.id
+        )
+    ]
 
 
-def get_comments(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
+def get_comments(revision: Any, sessions: Sessions) -> list[dict]:
     comments = []
 
-    # Query comments that are left on revisions but not specific diffs/changesets.
+    # Top-level revision comments are stored as `core:comment` transactions
+    # rather than against a specific diff or changeset.
     comment_transaction_phids_query = (
-        sessions.diff.query(DiffDb.Transaction)
-        .with_entities(DiffDb.Transaction.commentPHID)
+        sessions.diff.query(sessions.db.diff.Transaction)
+        .with_entities(sessions.db.diff.Transaction.commentPHID)
         .filter_by(
             objectPHID=revision.phid,
             transactionType="core:comment",
@@ -422,86 +475,67 @@ def get_comments(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
 
     comment_transaction_phids = [row[0] for row in comment_transaction_phids_query]
 
-    for comment in sessions.diff.query(DiffDb.TransactionComment).filter(
-        # Query all TransactionComments that match our revision PHID
-        # or the non-diff comments.
-        (DiffDb.TransactionComment.revisionPHID == revision.phid)
-        | (DiffDb.TransactionComment.phid.in_(comment_transaction_phids))
+    for comment in sessions.diff.query(sessions.db.diff.TransactionComment).filter(
+        (sessions.db.diff.TransactionComment.revisionPHID == revision.phid)
+        | (sessions.db.diff.TransactionComment.phid.in_(comment_transaction_phids))
     ):
-        att = json.loads(comment.attributes)
-        is_suggestion = (
-            "inline.state.initial" in att
-            and att["inline.state.initial"].get("hassuggestion") == "true"
+        comments.append(
+            transform_comment_dict(
+                comment=comment,
+                revision_id=revision.id,
+                diff_id=get_diff_id_for_changeset(comment.changesetID, sessions),
+                author_email=get_user_email(comment.authorPHID, sessions),
+                author_username=get_user_name(comment.authorPHID, sessions),
+            )
         )
-
-        comment_obj = {
-            "revision_id": revision.id,
-            "diff_id": get_diff_id_for_changeset(comment.changesetID, sessions),
-            "changeset_id": comment.changesetID,
-            "comment_id": comment.id,
-            "author_email": get_user_email(comment.authorPHID, sessions),
-            "author_username": get_user_name(comment.authorPHID, sessions),
-            "date_created": comment.dateCreated,
-            "character_count": len(comment.content),
-            "is_suggestion": is_suggestion,
-        }
-
-        comments.append(comment_obj)
 
     return comments
 
 
-def get_transactions(revision: DiffDb.Revision, sessions: Sessions) -> list[dict]:
+def get_transactions(revision: Any, sessions: Sessions) -> list[dict]:
     transactions = []
 
     for transaction in (
-        sessions.diff.query(DiffDb.Transaction)
+        sessions.diff.query(sessions.db.diff.Transaction)
         .filter(
-            DiffDb.Transaction.objectPHID == revision.phid,
-            DiffDb.Transaction.transactionType.in_(STATE_CHANGE_TYPES),
+            sessions.db.diff.Transaction.objectPHID == revision.phid,
+            sessions.db.diff.Transaction.transactionType.in_(STATE_CHANGE_TYPES),
         )
-        .order_by(DiffDb.Transaction.dateCreated)
+        .order_by(sessions.db.diff.Transaction.dateCreated)
     ):
-        transaction_obj = {
-            "revision_id": revision.id,
-            "transaction_id": transaction.id,
-            "transaction_type": transaction.transactionType,
-            "author_email": get_user_email(transaction.authorPHID, sessions),
-            "author_username": get_user_name(transaction.authorPHID, sessions),
-            "date_created": transaction.dateCreated,
-            "old_value": convert_value_to_string(transaction.oldValue),
-            "new_value": convert_value_to_string(transaction.newValue),
-        }
-
-        transactions.append(transaction_obj)
+        transactions.append(
+            transform_transaction_dict(
+                transaction=transaction,
+                revision_id=revision.id,
+                author_email=get_user_email(transaction.authorPHID, sessions),
+                author_username=get_user_name(transaction.authorPHID, sessions),
+            )
+        )
 
     return transactions
 
 
 def get_review_groups(sessions: Sessions) -> list[dict]:
-    """Returns a dict of group names with the members of each group"""
+    """Return one row per non-`bmo-` project, with usernames/emails of members."""
     groups = []
 
-    # Get the project objects that do not start with 'bmo-'.
-    projects = sessions.projects.query(ProjectDb.Project).filter(
-        ~ProjectDb.Project.name.startswith("bmo-")
+    projects = sessions.projects.query(sessions.db.project.Project).filter(
+        ~sessions.db.project.Project.name.startswith("bmo-")
     )
 
     logging.info(f"Found {projects.count()} review groups for processing.")
 
     for project in projects:
-        # Get a list of members of this group
         edge_query_result = (
-            sessions.projects.query(ProjectDb.Edges)
+            sessions.projects.query(sessions.db.project.Edges)
             .filter(
-                ProjectDb.Edges.src == project.phid,
-                ProjectDb.Edges.type
+                sessions.db.project.Edges.src == project.phid,
+                sessions.db.project.Edges.type
                 == PhabricatorEdgeConstant.PROJECT_HAS_MEMBER.value,
             )
             .all()
         )
 
-        # Get the PHID of each member (the destination on the edge).
         member_phids = {edge.dst for edge in edge_query_result}
 
         member_names = []
@@ -534,16 +568,14 @@ def get_revision(
     bug_id_query: Any,
     projects_query: Any,
 ) -> dict[str, Any]:
-    """Return a dict with transformed data for a revision."""
+    """Return the BigQuery row dict for a single revision."""
     target_repo = get_target_repository(revision.repositoryPHID, sessions)
-    repo_details = (
-        json.loads(target_repo.details) if target_repo and target_repo.details else {}
-    )
+    repo_details = parse_repository_details(target_repo)
 
     return {
         "bug_id": bug_id,
         "revision_id": revision.id,
-        # Set `date_approved` only when a landing has been detected.
+        # `date_approved` is only meaningful once a landing exists.
         "date_approved": date_approved if date_landed else None,
         "date_created": revision.dateCreated,
         "date_modified": revision.dateModified,
@@ -562,28 +594,12 @@ def get_revision(
     }
 
 
-def convert_value_to_string(value):
-    """Coerce transaction values to string.
-
-    If the passed value is a boolean, then we convert it to the string
-    "1" or "0". Otherwise we return it as a string.
-    """
-    if isinstance(value, bool):
-        # "1" for True, "0" for False
-        return str(int(value))
-
-    # fallback: convert everything else to string
-    return str(value)
-
-
-def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
-    """Get the timestamp of the most recently added entry in BigQuery.
-
-    See https://github.com/googleapis/python-bigquery/blob/main/samples/query_script.py
-    for more.
-    """
+def get_last_run_timestamp(
+    bq_client: bigquery.Client, config: Config
+) -> Optional[datetime]:
+    """Return the most recent `date_modified` from the revisions table."""
     most_recent_run_sql = (
-        f"SELECT MAX(date_modified) as last_run FROM `{BQ_REVISIONS_TABLE_ID}`"
+        f"SELECT MAX(date_modified) as last_run FROM `{config.bq_revisions_table_id}`"
     )
 
     parent_job = bq_client.query(most_recent_run_sql)
@@ -593,31 +609,36 @@ def get_last_run_timestamp(bq_client: bigquery.Client) -> Optional[datetime]:
         logging.error("Only one row should be returned by timestamp query.")
         sys.exit(1)
 
-    # The `last_run` field comes from the SQL query above.
     return rows[0].last_run
 
 
-def load_bigquery_tables(bq_client: bigquery.Client) -> dict[str, bigquery.Table]:
-    """Return a mapping of each table ID to the table field->type schema."""
+def load_bigquery_tables(
+    bq_client: bigquery.Client, config: Config
+) -> dict[str, bigquery.Table]:
+    """Return `{table_id: Table}` for every BigQuery table the ETL writes to."""
     return {
-        BQ_REVISIONS_TABLE_ID: bq_client.get_table(BQ_REVISIONS_TABLE_ID),
-        BQ_DIFFS_TABLE_ID: bq_client.get_table(BQ_DIFFS_TABLE_ID),
-        BQ_CHANGESETS_TABLE_ID: bq_client.get_table(BQ_CHANGESETS_TABLE_ID),
-        BQ_COMMENTS_TABLE_ID: bq_client.get_table(BQ_COMMENTS_TABLE_ID),
-        BQ_REVIEW_REQUESTS_TABLE_ID: bq_client.get_table(BQ_REVIEW_REQUESTS_TABLE_ID),
-        BQ_TRANSACTIONS_TABLE_ID: bq_client.get_table(BQ_TRANSACTIONS_TABLE_ID),
-        BQ_REVIEW_GROUPS_TABLE_ID: bq_client.get_table(BQ_REVIEW_GROUPS_TABLE_ID),
+        config.bq_revisions_table_id: bq_client.get_table(config.bq_revisions_table_id),
+        config.bq_diffs_table_id: bq_client.get_table(config.bq_diffs_table_id),
+        config.bq_changesets_table_id: bq_client.get_table(
+            config.bq_changesets_table_id
+        ),
+        config.bq_comments_table_id: bq_client.get_table(config.bq_comments_table_id),
+        config.bq_review_requests_table_id: bq_client.get_table(
+            config.bq_review_requests_table_id
+        ),
+        config.bq_transactions_table_id: bq_client.get_table(
+            config.bq_transactions_table_id
+        ),
+        config.bq_review_groups_table_id: bq_client.get_table(
+            config.bq_review_groups_table_id
+        ),
     }
 
 
 def create_staging_tables(
     bq_client: bigquery.Client, tables: dict[str, bigquery.Table]
 ) -> dict[str, bigquery.Table]:
-    """Create the staging tables for data insertion.
-
-    Returns a mapping of the target table ID to the `Table` object for the
-    staging table.
-    """
+    """Create per-target staging tables and return `{target_id: staging_table}`."""
     return {
         sql_table_id(table): bq_client.create_table(
             bigquery.Table(staging_table_id(sql_table_id(table)), schema=table.schema),
@@ -628,16 +649,22 @@ def create_staging_tables(
 
 
 def get_time_queries(
-    now: datetime, bq_client: bigquery.Client, full: bool = False
+    now: datetime,
+    bq_client: bigquery.Client,
+    sessions: Sessions,
+    config: Config,
+    full: bool = False,
 ) -> list:
-    """
-    Dont take the revisions created or modified after the start of the run
-    Dont take the revisions created before the last run
+    """Build the timestamp filters that bound the revisions-to-process window.
+
+    Excludes revisions created or modified at or after `now`; when not in
+    `--full` mode also excludes those at or before the previous run's last
+    `date_modified`.
     """
     queries = [
         or_(
-            DiffDb.Revision.dateCreated < now.timestamp(),
-            DiffDb.Revision.dateModified < now.timestamp(),
+            sessions.db.diff.Revision.dateCreated < now.timestamp(),
+            sessions.db.diff.Revision.dateModified < now.timestamp(),
         ),
     ]
 
@@ -645,7 +672,7 @@ def get_time_queries(
         logging.info("Full mode enabled, processing all revisions from the beginning.")
         return queries
 
-    last_run_datetime = get_last_run_timestamp(bq_client)
+    last_run_datetime = get_last_run_timestamp(bq_client, config)
 
     if last_run_datetime:
         last_run_datetime = last_run_datetime.replace(tzinfo=timezone.utc)
@@ -658,8 +685,8 @@ def get_time_queries(
         queries.extend(
             [
                 or_(
-                    DiffDb.Revision.dateCreated > last_run_timestamp,
-                    DiffDb.Revision.dateModified > last_run_timestamp,
+                    sessions.db.diff.Revision.dateCreated > last_run_timestamp,
+                    sessions.db.diff.Revision.dateModified > last_run_timestamp,
                 ),
             ]
         )
@@ -670,21 +697,21 @@ def get_time_queries(
 
 
 def revision_year_month(revision) -> tuple[int, int]:
-    """Return the (year, month) of a revision's `dateModified` timestamp."""
+    """Return the `(year, month)` of a revision's `dateModified` in UTC."""
     modified_date = datetime.fromtimestamp(revision.dateModified, tz=timezone.utc)
     return (modified_date.year, modified_date.month)
 
 
 def staging_table_id(table_id: str) -> str:
-    """Return a staging table ID for the given table ID."""
+    """Return `<table_id>_staging`."""
     return f"{table_id}_staging"
 
 
 def sql_table_id(table: bigquery.Table) -> str:
-    """Return a fully-qualified ID in standard SQL format.
+    """Return a standard-SQL identifier `project.dataset_id.table_id`.
 
-    Return in the format `project.dataset_id.table_id`, since `Table.full_table_id`
-    returns as `project:dataset_id.table_id`.
+    `bigquery.Table.full_table_id` uses the colon form `project:dataset.table`,
+    which is not valid in a SQL query.
     """
     return f"{table.project}.{table.dataset_id}.{table.table_id}"
 
@@ -697,16 +724,11 @@ def merge_into_bigquery(
     bq_tables: dict[str, bigquery.Table],
     updated_at_column: Optional[str] = None,
 ):
-    """Use a `MERGE` statement to upsert rows into BigQuery.
+    """Upsert rows from a staging table into its target table via `MERGE`.
 
-    Perform a `MERGE` statement to detect if an entry in the table has the matching ID.
-    If there is a matching ID, update the existing entry with the new data.
-    If there is no matching ID, insert a new row.
-
-    The staging table is de-duplicated via a subquery before merging, so that
-    duplicate rows (keyed on `id_column`) do not cause the `MERGE` to fail.
-    When `updated_at_column` is provided, the row with the most recent value is
-    kept; otherwise an arbitrary row is chosen.
+    The staging table is deduplicated by `id_column` before the merge; when
+    `updated_at_column` is given the row with the largest value wins,
+    otherwise an arbitrary row is kept.
     """
     logging.info(
         f"Merging staging table {staging_table_id} into target table `{table_id}`."
@@ -728,10 +750,10 @@ def merge_into_bigquery(
         USING ({dedup_subquery}) as S
         ON T.{id_column} = S.{id_column}
         WHEN MATCHED THEN
-          UPDATE SET {", ".join(f"{field.name} = S.{field.name}" for field in target_table.schema)}
+          UPDATE SET {", ".join(f"{column.name} = S.{column.name}" for column in target_table.schema)}
         WHEN NOT MATCHED THEN
-          INSERT ({", ".join(field.name for field in target_table.schema)})
-          VALUES ({", ".join(f"S.{field.name}" for field in target_table.schema)});
+          INSERT ({", ".join(column.name for column in target_table.schema)})
+          VALUES ({", ".join(f"S.{column.name}" for column in target_table.schema)});
     """
 
     merge_job = bq_client.query(merge_query)
@@ -741,7 +763,7 @@ def merge_into_bigquery(
 
 
 def truncate_staging_table(bq_client: bigquery.Client, table_id: str):
-    """Remove all rows from the staging table."""
+    """Truncate a staging table, refusing to touch anything not named `*_staging`."""
     if not table_id.endswith("_staging"):
         raise ValueError(
             f"Refusing to truncate `{table_id}`: table ID must end with `_staging`."
@@ -756,13 +778,13 @@ def truncate_staging_tables(
     bq_client: bigquery.Client,
     staging_tables: dict[str, bigquery.Table],
 ):
-    """Truncate all staging tables to avoid re-merging stale data."""
+    """Truncate every staging table."""
     for target_table_id in staging_tables:
         truncate_staging_table(bq_client, sql_table_id(staging_tables[target_table_id]))
 
 
 def delete_staging_table(bq_client: bigquery.Client, table_id: str):
-    """Delete the table with given ID."""
+    """Delete the BigQuery table with the given ID."""
     bq_client.delete_table(table_id)
     logging.info(f"Deleted table {table_id}.")
 
@@ -771,16 +793,17 @@ def merge_staging_tables(
     bq_client: bigquery.Client,
     staging_tables: dict[str, bigquery.Table],
     target_tables: dict[str, bigquery.Table],
+    config: Config,
 ):
-    """Merge all staging tables into their corresponding target tables."""
+    """Merge every staging table into its corresponding target table."""
     for target_table_id, id_column, updated_at_column in (
-        (BQ_REVISIONS_TABLE_ID, "revision_id", "date_modified"),
-        (BQ_DIFFS_TABLE_ID, "diff_id", "date_created"),
-        (BQ_CHANGESETS_TABLE_ID, "changeset_id", None),
-        (BQ_REVIEW_REQUESTS_TABLE_ID, "review_id", "date_modified"),
-        (BQ_COMMENTS_TABLE_ID, "comment_id", "date_created"),
-        (BQ_TRANSACTIONS_TABLE_ID, "transaction_id", "date_created"),
-        (BQ_REVIEW_GROUPS_TABLE_ID, "group_id", None),
+        (config.bq_revisions_table_id, "revision_id", "date_modified"),
+        (config.bq_diffs_table_id, "diff_id", "date_created"),
+        (config.bq_changesets_table_id, "changeset_id", None),
+        (config.bq_review_requests_table_id, "review_id", "date_modified"),
+        (config.bq_comments_table_id, "comment_id", "date_created"),
+        (config.bq_transactions_table_id, "transaction_id", "date_created"),
+        (config.bq_review_groups_table_id, "group_id", None),
     ):
         merge_into_bigquery(
             bq_client,
@@ -800,7 +823,6 @@ def submit_to_bigquery(
     if not rows:
         return
 
-    # Insert rows into staging table.
     for chunk in chunked(rows, 500):
         errors = bq_client.insert_rows_json(sql_table_id(table), chunk)
         if errors:
@@ -811,7 +833,7 @@ def submit_to_bigquery(
             sys.exit(1)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Phabricator ETL: extract revision data and load into BigQuery."
@@ -821,7 +843,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Process all revisions since the beginning, ignoring the last run timestamp.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def process_revision(
@@ -832,13 +854,14 @@ def process_revision(
     all_revisions,
     bug_id_query,
     projects_query,
+    config: Config,
 ):
-    """Process a single revision and submit its data to BigQuery staging tables."""
+    """Gather data for one revision and submit it to BigQuery staging tables."""
     logging.info(f"Processing revision D{revision.id}.")
 
     phab_querying_start = time.perf_counter()
 
-    bug_id = get_bug_id(revision, bug_id_query)
+    bug_id = get_bug_id(revision, sessions, bug_id_query)
 
     diffs, changesets, date_landed = get_diffs_changesets(
         revision,
@@ -867,20 +890,19 @@ def process_revision(
         f"Gathered relevant info for D{revision.id} in {phab_gathering_time}s."
     )
 
-    if DEBUG:
+    if config.debug:
         pprint.pprint(revision_json)
         return
 
     bigquery_insert_start = time.perf_counter()
 
-    # Send data to BigQuery staging tables.
     for target_table_id, data in (
-        (BQ_REVISIONS_TABLE_ID, [revision_json]),
-        (BQ_DIFFS_TABLE_ID, diffs),
-        (BQ_CHANGESETS_TABLE_ID, changesets),
-        (BQ_REVIEW_REQUESTS_TABLE_ID, review_requests),
-        (BQ_COMMENTS_TABLE_ID, comments),
-        (BQ_TRANSACTIONS_TABLE_ID, transactions),
+        (config.bq_revisions_table_id, [revision_json]),
+        (config.bq_diffs_table_id, diffs),
+        (config.bq_changesets_table_id, changesets),
+        (config.bq_review_requests_table_id, review_requests),
+        (config.bq_comments_table_id, comments),
+        (config.bq_transactions_table_id, transactions),
     ):
         submit_to_bigquery(bq_client, staging_tables[target_table_id], data)
 
@@ -898,32 +920,35 @@ def process():
 
     logging.info(f"Starting Phab-ETL with timestamp {now}.")
 
-    sessions = Sessions()
+    config = get_config()
+    sessions = Sessions.from_config(config)
 
     bq_client = bigquery.Client()
 
-    target_tables = load_bigquery_tables(bq_client)
+    target_tables = load_bigquery_tables(bq_client, config)
     staging_tables = create_staging_tables(bq_client, target_tables)
 
-    time_queries = get_time_queries(now, bq_client, full=args.full)
+    time_queries = get_time_queries(now, bq_client, sessions, config, full=args.full)
 
     updated_revisions = (
-        sessions.diff.query(DiffDb.Revision)
+        sessions.diff.query(sessions.db.diff.Revision)
         .filter(*time_queries)
-        .order_by(desc(DiffDb.Revision.dateModified))
+        .order_by(desc(sessions.db.diff.Revision.dateModified))
     )
-    all_revisions = sessions.diff.query(DiffDb.Revision)
+    all_revisions = sessions.diff.query(sessions.db.diff.Revision)
 
-    projects_query = sessions.projects.query(ProjectDb.Project)
+    projects_query = sessions.projects.query(sessions.db.project.Project)
 
-    bug_id_query = sessions.diff.query(DiffDb.CustomFieldStorage).filter(
-        # TODO I got this value from the DB, what is it?
-        DiffDb.CustomFieldStorage.fieldIndex == b"zdMFYM6423ua"
+    # TODO `fieldIndex` here is the bug-id custom field; document its origin.
+    bug_id_query = sessions.diff.query(sessions.db.diff.CustomFieldStorage).filter(
+        sessions.db.diff.CustomFieldStorage.fieldIndex == b"zdMFYM6423ua"
     )
 
     review_groups = get_review_groups(sessions)
     submit_to_bigquery(
-        bq_client, staging_tables[BQ_REVIEW_GROUPS_TABLE_ID], review_groups
+        bq_client,
+        staging_tables[config.bq_review_groups_table_id],
+        review_groups,
     )
 
     logging.info(f"Found {updated_revisions.count()} revisions for processing.")
@@ -942,13 +967,13 @@ def process():
                 all_revisions,
                 bug_id_query,
                 projects_query,
+                config,
             )
 
         logging.info(f"Finished processing {year}-{month:02d}, merging staging tables.")
-        merge_staging_tables(bq_client, staging_tables, target_tables)
+        merge_staging_tables(bq_client, staging_tables, target_tables, config)
         truncate_staging_tables(bq_client, staging_tables)
 
-    # Clean up staging tables.
     for target_table_id in staging_tables:
         delete_staging_table(bq_client, sql_table_id(staging_tables[target_table_id]))
 
