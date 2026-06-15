@@ -185,10 +185,18 @@ def is_membership_edge_transaction(metadata: Optional[str]) -> bool:
     """
     if not metadata:
         return False
-    parsed = json.loads(metadata)
+    try:
+        parsed = json.loads(metadata)
+    except (TypeError, json.JSONDecodeError):
+        return False
     if not isinstance(parsed, dict):
         return False
-    return parsed.get("edge:type") == PROJECT_HAS_MEMBER_EDGE_TYPE
+    edge_type = parsed.get("edge:type")
+    try:
+        edge_type_int = int(edge_type)
+    except (TypeError, ValueError):
+        return False
+    return edge_type_int == PROJECT_HAS_MEMBER_EDGE_TYPE
 
 
 def parse_edge_member_phids(value: Optional[str]) -> set[str]:
