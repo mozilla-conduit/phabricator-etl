@@ -210,9 +210,13 @@ def parse_edge_member_phids(value: Optional[str]) -> set[str]:
     if not value:
         return set()
 
-    parsed = json.loads(value)
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return set()
+
     if isinstance(parsed, dict):
-        return set(parsed.keys())
+        return {k for k in parsed.keys() if isinstance(k, str)}
     if isinstance(parsed, list):
         return {phid for phid in parsed if isinstance(phid, str)}
     return set()
