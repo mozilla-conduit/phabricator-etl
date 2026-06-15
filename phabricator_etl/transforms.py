@@ -218,7 +218,10 @@ def decode_name_transaction_value(value: Optional[str]) -> Optional[str]:
     """
     if not value:
         return None
-    decoded = json.loads(value)
+    try:
+        decoded = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return None
     return decoded if isinstance(decoded, str) else None
 
 
