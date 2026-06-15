@@ -15,6 +15,11 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable, Optional
 
+# Phabricator `edge.type` for project membership (PROJECT_HAS_MEMBER). Project
+# `core:edge` transactions cover many edge kinds (watchers, etc.); only this
+# one represents a membership change.
+PROJECT_HAS_MEMBER_EDGE_TYPE = 13
+
 
 def convert_value_to_string(value: Any) -> str:
     """Coerce transaction values to string.
@@ -168,3 +173,77 @@ def parse_repository_details(target_repo: Optional[Any]) -> dict:
     if not target_repo or not target_repo.details:
         return {}
     return json.loads(target_repo.details)
+
+
+def is_membership_edge_transaction(metadata: Optional[str]) -> bool:
+    """Return `True` for a `core:edge` transaction that changes membership.
+
+    Project `core:edge` transactions span every edge kind; the affected kind
+    is recorded as `edge:type` in the transaction's JSON `metadata`. Only
+    `PROJECT_HAS_MEMBER` edges represent membership changes. Returns `False`
+    when metadata is missing or names a different edge type.
+    """
+    if not metadata:
+        return False
+    parsed = json.loads(metadata)
+    if not isinstance(parsed, dict):
+        return False
+    return parsed.get("edge:type") == PROJECT_HAS_MEMBER_EDGE_TYPE
+
+
+def parse_edge_member_phids(value: Optional[str]) -> set[str]:
+    """Return the set of member PHIDs in a `core:edge` value snapshot.
+
+    Phabricator stores edge snapshots as a JSON object keyed by destination
+    PHID, but older transactions may use a JSON list of PHIDs. Returns an
+    empty set for `None`, an empty string, JSON `null`, or any other
+    unexpected JSON shape.
+    """
+    if not value:
+        return set()
+
+    parsed = json.loads(value)
+    if isinstance(parsed, dict):
+        return set(parsed.keys())
+    if isinstance(parsed, list):
+        return {phid for phid in parsed if isinstance(phid, str)}
+    return set()
+
+
+def decode_name_transaction_value(value: Optional[str]) -> Optional[str]:
+    """Decode a `project:name` transaction value (a JSON string), or `None`.
+
+    Returns `None` for `None`, an empty string, JSON `null`, or a non-string
+    JSON value.
+    """
+    if not value:
+        return None
+    decoded = json.loads(value)
+    return decoded if isinstance(decoded, str) else None
+
+
+def transform_project_transaction_dict(
+    transaction: Any,
+    project_id: Optional[int],
+    project_name: Optional[str],
+    author_email: Optional[str],
+    author_username: Optional[str],
+    old_value: Optional[str],
+    new_value: Optional[str],
+) -> dict:
+    """Build the output dict for a single project transaction row.
+
+    Value resolution (member PHID -> username, name decoding) happens in the
+    caller; this helper only assembles the row from already-resolved fields.
+    """
+    return {
+        "project_id": project_id,
+        "project_name": project_name,
+        "transaction_id": transaction.id,
+        "author_email": author_email,
+        "author_username": author_username,
+        "date_created": transaction.dateCreated,
+        "transaction_type": transaction.transactionType,
+        "old_value": old_value,
+        "new_value": new_value,
+    }
