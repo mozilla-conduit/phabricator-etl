@@ -587,12 +587,15 @@ def usernames_for_member_phids(member_phids: set[str], sessions: Sessions) -> st
 
     PHIDs that do not resolve to a user are skipped.
     """
-    names = [
-        name
-        for phid in member_phids
-        if (name := get_user_name(phid, sessions)) is not None
-    ]
-    return ",".join(sorted(names))
+    if not member_phids:
+        return ""
+
+    rows = (
+        sessions.users.query(sessions.db.user.User.userName)
+        .filter(sessions.db.user.User.phid.in_(member_phids))
+        .all()
+    )
+    return ",".join(sorted({row[0] for row in rows}))
 
 
 def get_project_transactions(sessions: Sessions) -> list[dict]:
