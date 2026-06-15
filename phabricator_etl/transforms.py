@@ -208,7 +208,11 @@ def parse_edge_member_phids(value: Optional[str]) -> set[str]:
         return set()
     if isinstance(parsed, dict):
         return set(parsed.keys())
-    return set(parsed)
+    if isinstance(parsed, list):
+        return {item for item in parsed if isinstance(item, str)}
+    if isinstance(parsed, str):
+        return {parsed}
+    return set()
 
 
 def decode_name_transaction_value(value: Optional[str]) -> Optional[str]:
