@@ -15,7 +15,6 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from enum import IntEnum
 from types import SimpleNamespace
 from typing import Any, Optional
 
@@ -29,6 +28,7 @@ from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
 
 from phabricator_etl.transforms import (
+    PhabricatorEdgeConstant,
     decode_name_transaction_value,
     is_membership_edge_transaction,
     latest_approved_date,
@@ -63,8 +63,8 @@ STATE_CHANGE_TYPES = [
 # project creation, renames, and membership (`core:edge`) changes.
 PROJECT_TRANSACTION_TYPES = [
     "core:create",
-    "project:name",
     "core:edge",
+    "project:name",
 ]
 
 logging.basicConfig(
@@ -277,15 +277,6 @@ def get_bug_id(revision: Any, sessions: Sessions, bug_id_query: Any) -> Optional
         return None
 
     return bug_id_query_result.fieldValue or None
-
-
-class PhabricatorEdgeConstant(IntEnum):
-    """Phabricator `edge.type` constants used to walk project/dependency graphs."""
-
-    DEPENDS_ON = 5
-    DEPENDED_ON = 6
-    OBJECT_HAS_PROJECT = 41
-    PROJECT_HAS_MEMBER = 13
 
 
 def get_revision_projects(
@@ -582,20 +573,20 @@ def get_project(project_phid: str, sessions: Sessions) -> Optional[Any]:
     )
 
 
-def usernames_for_member_phids(member_phids: set[str], sessions: Sessions) -> str:
-    """Return a sorted, comma-joined list of usernames for member PHIDs.
+def usernames_for_member_phids(member_phids: set[str], sessions: Sessions) -> list[str]:
+    """Return a sorted list of usernames for member PHIDs.
 
     PHIDs that do not resolve to a user are skipped.
     """
     if not member_phids:
-        return ""
+        return []
 
     rows = (
         sessions.users.query(sessions.db.user.User.userName)
         .filter(sessions.db.user.User.phid.in_(member_phids))
         .all()
     )
-    return ",".join(sorted({row[0] for row in rows}))
+    return sorted({row[0] for row in rows})
 
 
 def get_project_transactions(sessions: Sessions) -> list[dict]:
@@ -603,7 +594,7 @@ def get_project_transactions(sessions: Sessions) -> list[dict]:
 
     Captures project creation (`core:create`), renames (`project:name`), and
     membership changes (`core:edge` filtered to `PROJECT_HAS_MEMBER` edges).
-    For membership changes, `old_value`/`new_value` hold the comma-joined
+    For membership changes, `old_value`/`new_value` hold the lists of
     usernames removed/added by the transaction.
     """
     transactions = []
@@ -619,6 +610,8 @@ def get_project_transactions(sessions: Sessions) -> list[dict]:
     )
 
     for transaction in project_transactions:
+        project = get_project(transaction.objectPHID, sessions)
+
         if transaction.transactionType == "core:edge":
             if not is_membership_edge_transaction(transaction.metadata):
                 continue
@@ -631,11 +624,10 @@ def get_project_transactions(sessions: Sessions) -> list[dict]:
             old_value = decode_name_transaction_value(transaction.oldValue)
             new_value = decode_name_transaction_value(transaction.newValue)
         else:
-            # `core:create` carries no meaningful old/new value.
-            old_value = None
-            new_value = None
-
-        project = get_project(transaction.objectPHID, sessions)
+            # `core:create` marks the project's creation: there is no prior
+            # value, and the new value is the name of the newly created project.
+            old_value = []
+            new_value = [project.name] if project else []
 
         transactions.append(
             transform_project_transaction_dict(

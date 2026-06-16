@@ -13,25 +13,30 @@ unit-testable. Functions that actually query the database live in
 from __future__ import annotations
 
 import json
+from enum import IntEnum
 from typing import Any, Iterable, Optional
 
-# Phabricator `edge.type` for project membership (PROJECT_HAS_MEMBER). Project
-# `core:edge` transactions cover many edge kinds (watchers, etc.); only this
-# one represents a membership change.
-PROJECT_HAS_MEMBER_EDGE_TYPE = 13
+
+class PhabricatorEdgeConstant(IntEnum):
+    """Phabricator `edge.type` constants used to walk project/dependency graphs."""
+
+    DEPENDS_ON = 5
+    DEPENDED_ON = 6
+    OBJECT_HAS_PROJECT = 41
+    PROJECT_HAS_MEMBER = 13
 
 
-def convert_value_to_string(value: Any) -> str:
-    """Coerce transaction values to string.
+def convert_value_to_string_list(value: Any) -> list[str]:
+    """Coerce a transaction value to a list of strings for a REPEATED field.
 
-    If the passed value is a boolean, then we convert it to the string
-    `"1"` or `"0"`. Otherwise we return it as a string.
+    If the passed value is a boolean, then we convert it to `["1"]` or
+    `["0"]`. Otherwise we wrap its string form in a single-element list.
     """
     if isinstance(value, bool):
-        # `"1"` for `True`, `"0"` for `False`.
-        return str(int(value))
+        # `["1"]` for `True`, `["0"]` for `False`.
+        return [str(int(value))]
 
-    return str(value)
+    return [str(value)]
 
 
 def transform_changeset_dict(
@@ -96,8 +101,8 @@ def transform_transaction_dict(
         "author_email": author_email,
         "author_username": author_username,
         "date_created": transaction.dateCreated,
-        "old_value": convert_value_to_string(transaction.oldValue),
-        "new_value": convert_value_to_string(transaction.newValue),
+        "old_value": convert_value_to_string_list(transaction.oldValue),
+        "new_value": convert_value_to_string_list(transaction.newValue),
     }
 
 
@@ -196,7 +201,7 @@ def is_membership_edge_transaction(metadata: Optional[str]) -> bool:
         edge_type_int = int(edge_type)
     except (TypeError, ValueError):
         return False
-    return edge_type_int == PROJECT_HAS_MEMBER_EDGE_TYPE
+    return edge_type_int == PhabricatorEdgeConstant.PROJECT_HAS_MEMBER.value
 
 
 def parse_edge_member_phids(value: Optional[str]) -> set[str]:
@@ -222,19 +227,19 @@ def parse_edge_member_phids(value: Optional[str]) -> set[str]:
     return set()
 
 
-def decode_name_transaction_value(value: Optional[str]) -> Optional[str]:
-    """Decode a `project:name` transaction value (a JSON string), or `None`.
+def decode_name_transaction_value(value: Optional[str]) -> list[str]:
+    """Decode a `project:name` transaction value into a list of strings.
 
-    Returns `None` for `None`, an empty string, JSON `null`, or a non-string
-    JSON value.
+    Returns `[]` for `None`, an empty string, JSON `null`, or a non-string
+    JSON value; otherwise a single-element list holding the decoded name.
     """
     if not value:
-        return None
+        return []
     try:
         decoded = json.loads(value)
     except (TypeError, json.JSONDecodeError):
-        return None
-    return decoded if isinstance(decoded, str) else None
+        return []
+    return [decoded] if isinstance(decoded, str) else []
 
 
 def transform_project_transaction_dict(
@@ -243,8 +248,8 @@ def transform_project_transaction_dict(
     project_name: Optional[str],
     author_email: Optional[str],
     author_username: Optional[str],
-    old_value: Optional[str],
-    new_value: Optional[str],
+    old_value: list[str],
+    new_value: list[str],
 ) -> dict:
     """Build the output dict for a single project transaction row.
 

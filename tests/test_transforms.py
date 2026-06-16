@@ -10,12 +10,12 @@ from types import SimpleNamespace
 import pytest
 
 from phabricator_etl.transforms import (
-    PROJECT_HAS_MEMBER_EDGE_TYPE,
+    PhabricatorEdgeConstant,
     decode_name_transaction_value,
     is_membership_edge_transaction,
     parse_edge_member_phids,
     transform_project_transaction_dict,
-    convert_value_to_string,
+    convert_value_to_string_list,
     latest_approved_date,
     latest_landed_date,
     parse_repository_details,
@@ -28,7 +28,9 @@ from phabricator_etl.transforms import (
 
 
 def test_is_membership_edge_transaction_true_for_member_edge():
-    metadata = json.dumps({"edge:type": PROJECT_HAS_MEMBER_EDGE_TYPE})
+    metadata = json.dumps(
+        {"edge:type": PhabricatorEdgeConstant.PROJECT_HAS_MEMBER.value}
+    )
     assert is_membership_edge_transaction(metadata) is True
 
 
@@ -77,10 +79,10 @@ def test_membership_diff_added_and_removed():
 
 
 def test_decode_name_transaction_value():
-    assert decode_name_transaction_value(json.dumps("My Project")) == "My Project"
-    assert decode_name_transaction_value(None) is None
-    assert decode_name_transaction_value("") is None
-    assert decode_name_transaction_value("null") is None
+    assert decode_name_transaction_value(json.dumps("My Project")) == ["My Project"]
+    assert decode_name_transaction_value(None) == []
+    assert decode_name_transaction_value("") == []
+    assert decode_name_transaction_value("null") == []
 
 
 def test_transform_project_transaction_dict_shape():
@@ -95,8 +97,8 @@ def test_transform_project_transaction_dict_shape():
         project_name="bmo-reviewers",
         author_email="alice@example.com",
         author_username="alice",
-        old_value="bob",
-        new_value="carol",
+        old_value=["bob"],
+        new_value=["carol"],
     )
     assert row == {
         "project_id": 7,
@@ -106,12 +108,12 @@ def test_transform_project_transaction_dict_shape():
         "author_username": "alice",
         "date_created": 1700000000,
         "transaction_type": "core:edge",
-        "old_value": "bob",
-        "new_value": "carol",
+        "old_value": ["bob"],
+        "new_value": ["carol"],
     }
 
 
-def test_transform_project_transaction_dict_create_has_null_values():
+def test_transform_project_transaction_dict_create_has_new_name_only():
     transaction = SimpleNamespace(
         id=1,
         dateCreated=1700000000,
@@ -123,49 +125,50 @@ def test_transform_project_transaction_dict_create_has_null_values():
         project_name="bmo-reviewers",
         author_email=None,
         author_username=None,
-        old_value=None,
-        new_value=None,
+        # `core:create` has no prior value; the new value is the project name.
+        old_value=[],
+        new_value=["bmo-reviewers"],
     )
-    assert row["old_value"] is None
-    assert row["new_value"] is None
+    assert row["old_value"] == []
+    assert row["new_value"] == ["bmo-reviewers"]
     assert row["transaction_type"] == "core:create"
 
 
-def test_convert_value_to_string_true_becomes_one():
-    assert convert_value_to_string(True) == "1", (
-        '`convert_value_to_string(True)` should return `"1"` so that '
-        "boolean transaction values round-trip into BigQuery's string column."
+def test_convert_value_to_string_list_true_becomes_one():
+    assert convert_value_to_string_list(True) == ["1"], (
+        '`convert_value_to_string_list(True)` should return `["1"]` so that '
+        "boolean transaction values round-trip into BigQuery's REPEATED column."
     )
 
 
-def test_convert_value_to_string_false_becomes_zero():
-    assert convert_value_to_string(False) == "0", (
-        '`convert_value_to_string(False)` should return `"0"` '
+def test_convert_value_to_string_list_false_becomes_zero():
+    assert convert_value_to_string_list(False) == ["0"], (
+        '`convert_value_to_string_list(False)` should return `["0"]` '
         "(the string, not the integer)."
     )
 
 
-def test_convert_value_to_string_str_passes_through():
-    assert convert_value_to_string("already a string") == "already a string", (
-        "A string input should be returned unchanged."
+def test_convert_value_to_string_list_str_passes_through():
+    assert convert_value_to_string_list("already a string") == ["already a string"], (
+        "A string input should be wrapped in a single-element list unchanged."
     )
 
 
-def test_convert_value_to_string_int_stringifies():
-    assert convert_value_to_string(42) == "42", (
+def test_convert_value_to_string_list_int_stringifies():
+    assert convert_value_to_string_list(42) == ["42"], (
         "Integer inputs should be coerced to their decimal string form."
     )
 
 
-def test_convert_value_to_string_none_stringifies():
-    assert convert_value_to_string(None) == "None", (
+def test_convert_value_to_string_list_none_stringifies():
+    assert convert_value_to_string_list(None) == ["None"], (
         "`None` should be coerced via `str(None)` rather than special-cased; "
-        "the ETL relies on a non-null string for `oldValue`/`newValue`."
+        "the ETL relies on a non-null value for `oldValue`/`newValue`."
     )
 
 
-def test_convert_value_to_string_empty_string_passes_through():
-    assert convert_value_to_string("") == "", (
+def test_convert_value_to_string_list_empty_string_passes_through():
+    assert convert_value_to_string_list("") == [""], (
         "Empty strings should remain empty rather than being coerced to another value."
     )
 
@@ -354,11 +357,11 @@ def test_transform_transaction_dict_maps_fields_and_stringifies_values():
         "author_email": "bob@example.com",
         "author_username": "bob",
         "date_created": 1_700_000_000,
-        "old_value": "0",
-        "new_value": "2",
+        "old_value": ["0"],
+        "new_value": ["2"],
     }, (
         "`transform_transaction_dict` should map every column straight "
-        "through, using `convert_value_to_string` on the old/new values."
+        "through, using `convert_value_to_string_list` on the old/new values."
     )
 
 
@@ -378,9 +381,9 @@ def test_transform_transaction_dict_coerces_boolean_values():
         author_username=None,
     )
 
-    assert (result["old_value"], result["new_value"]) == ("0", "1"), (
+    assert (result["old_value"], result["new_value"]) == (["0"], ["1"]), (
         "Boolean `oldValue`/`newValue` should round-trip through "
-        '`convert_value_to_string`, becoming `"0"`/`"1"`.'
+        '`convert_value_to_string_list`, becoming `["0"]`/`["1"]`.'
     )
 
 
