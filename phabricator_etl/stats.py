@@ -15,7 +15,6 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from enum import IntEnum
 from types import SimpleNamespace
 from typing import Any, Optional
 
@@ -29,12 +28,17 @@ from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
 
 from phabricator_etl.transforms import (
+    PhabricatorEdgeConstant,
+    decode_name_transaction_value,
+    is_membership_edge_transaction,
     latest_approved_date,
     latest_landed_date,
+    parse_edge_member_phids,
     parse_repository_details,
     should_include_diff,
     transform_changeset_dict,
     transform_comment_dict,
+    transform_project_transaction_dict,
     transform_review_dict,
     transform_transaction_dict,
 )
@@ -55,6 +59,14 @@ STATE_CHANGE_TYPES = [
     "differential.revision.wrong",
 ]
 
+# Project transaction types tracked in the project transactions table:
+# project creation, renames, and membership (`core:edge`) changes.
+PROJECT_TRANSACTION_TYPES = [
+    "core:create",
+    "core:edge",
+    "project:name",
+]
+
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] - {%(filename)s:%(lineno)d} %(levelname)s - %(message)s",
@@ -73,6 +85,7 @@ class Config:
     bq_review_requests_table_id: str
     bq_transactions_table_id: str
     bq_review_groups_table_id: str
+    bq_project_transactions_table_id: str
 
     phab_db_url: str
     phab_db_namespace: str
@@ -97,6 +110,7 @@ def get_config() -> Config:
         bq_review_requests_table_id=os.environ["BQ_REVIEW_REQUESTS_TABLE_ID"],
         bq_transactions_table_id=os.environ["BQ_TRANSACTIONS_TABLE_ID"],
         bq_review_groups_table_id=os.environ["BQ_REVIEW_GROUPS_TABLE_ID"],
+        bq_project_transactions_table_id=os.environ["BQ_PROJECT_TRANSACTIONS_TABLE_ID"],
         phab_db_url=os.environ.get("PHAB_URL", "127.0.0.1"),
         phab_db_namespace=os.environ.get("PHAB_NAMESPACE", "bitnami_phabricator"),
         phab_db_port=os.environ.get("PHAB_PORT", "3307"),
@@ -155,6 +169,7 @@ class Db:
             project=SimpleNamespace(
                 Project=project_classes.project,
                 Edges=project_classes.edge,
+                Transaction=project_classes.project_transaction,
             ),
             repo=SimpleNamespace(
                 Repository=repo_classes.repository,
@@ -262,15 +277,6 @@ def get_bug_id(revision: Any, sessions: Sessions, bug_id_query: Any) -> Optional
         return None
 
     return bug_id_query_result.fieldValue or None
-
-
-class PhabricatorEdgeConstant(IntEnum):
-    """Phabricator `edge.type` constants used to walk project/dependency graphs."""
-
-    DEPENDS_ON = 5
-    DEPENDED_ON = 6
-    OBJECT_HAS_PROJECT = 41
-    PROJECT_HAS_MEMBER = 13
 
 
 def get_revision_projects(
@@ -558,6 +564,86 @@ def get_review_groups(sessions: Sessions) -> list[dict]:
     return groups
 
 
+def get_project(project_phid: str, sessions: Sessions) -> Optional[Any]:
+    """Return the project model object for a project PHID."""
+    return (
+        sessions.projects.query(sessions.db.project.Project)
+        .filter_by(phid=project_phid)
+        .first()
+    )
+
+
+def usernames_for_member_phids(member_phids: set[str], sessions: Sessions) -> list[str]:
+    """Return a sorted list of usernames for member PHIDs.
+
+    PHIDs that do not resolve to a user are skipped.
+    """
+    if not member_phids:
+        return []
+
+    rows = (
+        sessions.users.query(sessions.db.user.User.userName)
+        .filter(sessions.db.user.User.phid.in_(member_phids))
+        .all()
+    )
+    return sorted({row[0] for row in rows})
+
+
+def get_project_transactions(sessions: Sessions) -> list[dict]:
+    """Return one row per tracked project transaction across all projects.
+
+    Captures project creation (`core:create`), renames (`project:name`), and
+    membership changes (`core:edge` filtered to `PROJECT_HAS_MEMBER` edges).
+    For membership changes, `old_value`/`new_value` hold the lists of
+    usernames removed/added by the transaction.
+    """
+    transactions = []
+
+    project_transactions = (
+        sessions.projects.query(sessions.db.project.Transaction)
+        .filter(
+            sessions.db.project.Transaction.transactionType.in_(
+                PROJECT_TRANSACTION_TYPES
+            )
+        )
+        .order_by(sessions.db.project.Transaction.dateCreated)
+    )
+
+    for transaction in project_transactions:
+        project = get_project(transaction.objectPHID, sessions)
+
+        if transaction.transactionType == "core:edge":
+            if not is_membership_edge_transaction(transaction.metadata):
+                continue
+
+            old_phids = parse_edge_member_phids(transaction.oldValue)
+            new_phids = parse_edge_member_phids(transaction.newValue)
+            old_value = usernames_for_member_phids(old_phids - new_phids, sessions)
+            new_value = usernames_for_member_phids(new_phids - old_phids, sessions)
+        elif transaction.transactionType == "project:name":
+            old_value = decode_name_transaction_value(transaction.oldValue)
+            new_value = decode_name_transaction_value(transaction.newValue)
+        else:
+            # `core:create` marks the project's creation: there is no prior
+            # value, and the new value is the name of the newly created project.
+            old_value = []
+            new_value = [project.name] if project else []
+
+        transactions.append(
+            transform_project_transaction_dict(
+                transaction=transaction,
+                project_id=project.id if project else None,
+                project_name=project.name if project else None,
+                author_email=get_user_email(transaction.authorPHID, sessions),
+                author_username=get_user_name(transaction.authorPHID, sessions),
+                old_value=old_value,
+                new_value=new_value,
+            )
+        )
+
+    return transactions
+
+
 def get_revision(
     revision: Any,
     bug_id: Optional[int],
@@ -631,6 +717,9 @@ def load_bigquery_tables(
         ),
         config.bq_review_groups_table_id: bq_client.get_table(
             config.bq_review_groups_table_id
+        ),
+        config.bq_project_transactions_table_id: bq_client.get_table(
+            config.bq_project_transactions_table_id
         ),
     }
 
@@ -804,6 +893,7 @@ def merge_staging_tables(
         (config.bq_comments_table_id, "comment_id", "date_created"),
         (config.bq_transactions_table_id, "transaction_id", "date_created"),
         (config.bq_review_groups_table_id, "group_id", None),
+        (config.bq_project_transactions_table_id, "transaction_id", "date_created"),
     ):
         merge_into_bigquery(
             bq_client,
@@ -949,6 +1039,14 @@ def process():
         bq_client,
         staging_tables[config.bq_review_groups_table_id],
         review_groups,
+    )
+
+    project_transactions = get_project_transactions(sessions)
+    logging.info(f"Found {len(project_transactions)} project transactions.")
+    submit_to_bigquery(
+        bq_client,
+        staging_tables[config.bq_project_transactions_table_id],
+        project_transactions,
     )
 
     logging.info(f"Found {updated_revisions.count()} revisions for processing.")

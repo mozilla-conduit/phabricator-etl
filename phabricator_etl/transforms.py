@@ -13,20 +13,30 @@ unit-testable. Functions that actually query the database live in
 from __future__ import annotations
 
 import json
+from enum import IntEnum
 from typing import Any, Iterable, Optional
 
 
-def convert_value_to_string(value: Any) -> str:
-    """Coerce transaction values to string.
+class PhabricatorEdgeConstant(IntEnum):
+    """Phabricator `edge.type` constants used to walk project/dependency graphs."""
 
-    If the passed value is a boolean, then we convert it to the string
-    `"1"` or `"0"`. Otherwise we return it as a string.
+    DEPENDS_ON = 5
+    DEPENDED_ON = 6
+    OBJECT_HAS_PROJECT = 41
+    PROJECT_HAS_MEMBER = 13
+
+
+def convert_value_to_string_list(value: Any) -> list[str]:
+    """Coerce a transaction value to a list of strings for a REPEATED field.
+
+    If the passed value is a boolean, then we convert it to `["1"]` or
+    `["0"]`. Otherwise we wrap its string form in a single-element list.
     """
     if isinstance(value, bool):
-        # `"1"` for `True`, `"0"` for `False`.
-        return str(int(value))
+        # `["1"]` for `True`, `["0"]` for `False`.
+        return [str(int(value))]
 
-    return str(value)
+    return [str(value)]
 
 
 def transform_changeset_dict(
@@ -91,8 +101,8 @@ def transform_transaction_dict(
         "author_email": author_email,
         "author_username": author_username,
         "date_created": transaction.dateCreated,
-        "old_value": convert_value_to_string(transaction.oldValue),
-        "new_value": convert_value_to_string(transaction.newValue),
+        "old_value": convert_value_to_string_list(transaction.oldValue),
+        "new_value": convert_value_to_string_list(transaction.newValue),
     }
 
 
@@ -168,3 +178,92 @@ def parse_repository_details(target_repo: Optional[Any]) -> dict:
     if not target_repo or not target_repo.details:
         return {}
     return json.loads(target_repo.details)
+
+
+def is_membership_edge_transaction(metadata: Optional[str]) -> bool:
+    """Return `True` for a `core:edge` transaction that changes membership.
+
+    Project `core:edge` transactions span every edge kind; the affected kind
+    is recorded as `edge:type` in the transaction's JSON `metadata`. Only
+    `PROJECT_HAS_MEMBER` edges represent membership changes. Returns `False`
+    when metadata is missing or names a different edge type.
+    """
+    if not metadata:
+        return False
+    try:
+        parsed = json.loads(metadata)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    edge_type = parsed.get("edge:type")
+    try:
+        edge_type_int = int(edge_type)
+    except (TypeError, ValueError):
+        return False
+    return edge_type_int == PhabricatorEdgeConstant.PROJECT_HAS_MEMBER.value
+
+
+def parse_edge_member_phids(value: Optional[str]) -> set[str]:
+    """Return the set of member PHIDs in a `core:edge` value snapshot.
+
+    Phabricator stores edge snapshots as a JSON object keyed by destination
+    PHID, but older transactions may use a JSON list of PHIDs. Returns an
+    empty set for `None`, an empty string, JSON `null`, or any other
+    unexpected JSON shape.
+    """
+    if not value:
+        return set()
+
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return set()
+
+    if isinstance(parsed, dict):
+        return {k for k in parsed.keys() if isinstance(k, str)}
+    if isinstance(parsed, list):
+        return {phid for phid in parsed if isinstance(phid, str)}
+    return set()
+
+
+def decode_name_transaction_value(value: Optional[str]) -> list[str]:
+    """Decode a `project:name` transaction value into a list of strings.
+
+    Returns `[]` for `None`, an empty string, JSON `null`, or a non-string
+    JSON value; otherwise a single-element list holding the decoded name.
+    """
+    if not value:
+        return []
+    try:
+        decoded = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return [decoded] if isinstance(decoded, str) else []
+
+
+def transform_project_transaction_dict(
+    transaction: Any,
+    project_id: Optional[int],
+    project_name: Optional[str],
+    author_email: Optional[str],
+    author_username: Optional[str],
+    old_value: list[str],
+    new_value: list[str],
+) -> dict:
+    """Build the output dict for a single project transaction row.
+
+    Value resolution (member PHID -> username, name decoding) happens in the
+    caller; this helper only assembles the row from already-resolved fields.
+    """
+    return {
+        "project_id": project_id,
+        "project_name": project_name,
+        "transaction_id": transaction.id,
+        "author_email": author_email,
+        "author_username": author_username,
+        "date_created": transaction.dateCreated,
+        "transaction_type": transaction.transactionType,
+        "old_value": old_value,
+        "new_value": new_value,
+    }
