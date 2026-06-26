@@ -535,10 +535,10 @@ def get_transactions(revision: Any, sessions: Sessions) -> list[dict]:
         # than a scalar, so resolve the PHIDs to names for readability. This
         # is what surfaces review requests to rotation (project) groups.
         if transaction.transactionType == "differential.revision.reviewers":
-            transaction_obj["old_value"] = convert_json_to_string(
+            transaction_obj["old_value"] = convert_json_to_string_list(
                 transaction.oldValue, sessions
             )
-            transaction_obj["new_value"] = convert_json_to_string(
+            transaction_obj["new_value"] = convert_json_to_string_list(
                 transaction.newValue, sessions
             )
 
@@ -706,18 +706,20 @@ def get_revision(
     }
 
 
-def convert_json_to_string(value: Any, sessions: Sessions) -> str:
-    """Convert a JSON-encoded PHID map to a comma-separated string of names.
+def convert_json_to_string_list(value: Any, sessions: Sessions) -> list[str]:
+    """Convert a JSON-encoded PHID map to a list of names.
 
     Handles the "differential.revision.reviewers" transaction type, whose
     old/new values are JSON objects mapping reviewer PHID -> status (e.g.
     `{"PHID-USER-...": "added"}`). Only the keys (PHIDs) are used; the status
     values are ignored.
 
-    Phabricator stores the empty JSON list `[]` when a revision had no prior
-    reviewers, so an empty/falsy value is expected and resolves to "". Any
-    other non-dict shape is unexpected for this transaction type; it is logged
-    and resolved to "" rather than writing raw JSON into the analytics column.
+    The result is a list of strings so it can populate a REPEATED BigQuery
+    field. Phabricator stores the empty JSON list `[]` when a revision had no
+    prior reviewers, so an empty/falsy value is expected and resolves to `[]`.
+    Any other non-dict shape is unexpected for this transaction type; it is
+    logged and resolved to `[]` rather than writing raw JSON into the analytics
+    column.
     """
     try:
         phid_map = json.loads(value)
@@ -731,7 +733,7 @@ def convert_json_to_string(value: Any, sessions: Sessions) -> str:
             else get_user_name(phid.encode("utf-8"), sessions)
             for phid in phid_map.keys()
         ]
-        return ", ".join(name for name in names if name is not None)
+        return [name for name in names if name is not None]
 
     if phid_map:
         logging.warning(
@@ -739,7 +741,7 @@ def convert_json_to_string(value: Any, sessions: Sessions) -> str:
             type(phid_map).__name__,
             value,
         )
-    return ""
+    return []
 
 
 def get_last_run_timestamp(
