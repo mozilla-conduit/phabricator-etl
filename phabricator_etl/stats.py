@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import json
 import logging
 import os
 import pprint
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -54,6 +55,7 @@ STATE_CHANGE_TYPES = [
     "differential.revision.reopen",
     "differential.revision.request",
     "differential.revision.resign",
+    "differential.revision.reviewers",
     "differential.revision.status",
     "differential.revision.void",
     "differential.revision.wrong",
@@ -197,6 +199,8 @@ class Sessions:
     repo: Session
     diff: Session
     db: Db
+    user_name_cache: dict[bytes, Optional[str]] = field(default_factory=dict)
+    project_name_cache: dict[bytes, Optional[str]] = field(default_factory=dict)
 
     @classmethod
     def from_config(cls, config: Config) -> Sessions:
@@ -352,19 +356,35 @@ def get_stack_size(
     return len(stack)
 
 
-def get_user_name(author_phid: str, sessions: Sessions) -> Optional[str]:
-    try:
-        user = (
-            sessions.users.query(sessions.db.user.User)
-            .filter_by(phid=author_phid)
-            .one()
-        )
-        return user.userName
-    except NoResultFound:
-        return None
+def get_user_name(author_phid: bytes, sessions: Sessions) -> Optional[str]:
+    if author_phid not in sessions.user_name_cache:
+        try:
+            user = (
+                sessions.users.query(sessions.db.user.User)
+                .filter_by(phid=author_phid)
+                .one()
+            )
+            sessions.user_name_cache[author_phid] = user.userName
+        except NoResultFound:
+            sessions.user_name_cache[author_phid] = None
+    return sessions.user_name_cache[author_phid]
 
 
-def get_user_email(author_phid: str, sessions: Sessions) -> Optional[str]:
+def get_project_name(project_phid: bytes, sessions: Sessions) -> Optional[str]:
+    if project_phid not in sessions.project_name_cache:
+        try:
+            project = (
+                sessions.projects.query(sessions.db.project.Project)
+                .filter_by(phid=project_phid)
+                .one()
+            )
+            sessions.project_name_cache[project_phid] = project.name
+        except NoResultFound:
+            sessions.project_name_cache[project_phid] = None
+    return sessions.project_name_cache[project_phid]
+
+
+def get_user_email(author_phid: bytes, sessions: Sessions) -> Optional[str]:
     try:
         user_email = (
             sessions.users.query(sessions.db.user.UserEmail)
@@ -390,12 +410,7 @@ def get_review_requests(
     for review in reviews:
         is_reviewer_group = review.reviewerPHID.startswith(b"PHID-PROJ-")
         if is_reviewer_group:
-            reviewer = (
-                sessions.projects.query(sessions.db.project.Project)
-                .filter_by(phid=review.reviewerPHID)
-                .one()
-            )
-            reviewer_username = reviewer.name
+            reviewer_username = get_project_name(review.reviewerPHID, sessions)
             reviewer_email = None
         else:
             reviewer_username = get_user_name(review.reviewerPHID, sessions)
@@ -509,14 +524,25 @@ def get_transactions(revision: Any, sessions: Sessions) -> list[dict]:
         )
         .order_by(sessions.db.diff.Transaction.dateCreated)
     ):
-        transactions.append(
-            transform_transaction_dict(
-                transaction=transaction,
-                revision_id=revision.id,
-                author_email=get_user_email(transaction.authorPHID, sessions),
-                author_username=get_user_name(transaction.authorPHID, sessions),
-            )
+        transaction_obj = transform_transaction_dict(
+            transaction=transaction,
+            revision_id=revision.id,
+            author_email=get_user_email(transaction.authorPHID, sessions),
+            author_username=get_user_name(transaction.authorPHID, sessions),
         )
+
+        # Reviewer-change transactions store a JSON PHID->status map rather
+        # than a scalar, so resolve the PHIDs to names for readability. This
+        # is what surfaces review requests to rotation (project) groups.
+        if transaction.transactionType == "differential.revision.reviewers":
+            transaction_obj["old_value"] = convert_json_to_string_list(
+                transaction.oldValue, sessions
+            )
+            transaction_obj["new_value"] = convert_json_to_string_list(
+                transaction.newValue, sessions
+            )
+
+        transactions.append(transaction_obj)
 
     return transactions
 
@@ -678,6 +704,44 @@ def get_revision(
         ),
         "project_tags": get_revision_projects(revision, sessions, projects_query),
     }
+
+
+def convert_json_to_string_list(value: Any, sessions: Sessions) -> list[str]:
+    """Convert a JSON-encoded PHID map to a list of names.
+
+    Handles the "differential.revision.reviewers" transaction type, whose
+    old/new values are JSON objects mapping reviewer PHID -> status (e.g.
+    `{"PHID-USER-...": "added"}`). Only the keys (PHIDs) are used; the status
+    values are ignored.
+
+    The result is a list of strings so it can populate a REPEATED BigQuery
+    field. Phabricator stores the empty JSON list `[]` when a revision had no
+    prior reviewers, so an empty/falsy value is expected and resolves to `[]`.
+    Any other non-dict shape is unexpected for this transaction type; it is
+    logged and resolved to `[]` rather than writing raw JSON into the analytics
+    column.
+    """
+    try:
+        phid_map = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        phid_map = None
+
+    if isinstance(phid_map, dict):
+        names = [
+            get_project_name(phid.encode("utf-8"), sessions)
+            if phid.startswith("PHID-PROJ-")
+            else get_user_name(phid.encode("utf-8"), sessions)
+            for phid in phid_map.keys()
+        ]
+        return [name for name in names if name is not None]
+
+    if phid_map:
+        logging.warning(
+            "Unexpected non-dict reviewers value (%s): %r",
+            type(phid_map).__name__,
+            value,
+        )
+    return []
 
 
 def get_last_run_timestamp(
