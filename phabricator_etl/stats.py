@@ -794,10 +794,10 @@ def create_staging_tables(
 ) -> dict[str, bigquery.Table]:
     """Create per-target staging tables and return `{target_id: staging_table}`.
 
-    A staging table left behind by a previous run that crashed before its
-    cleanup step is reused as-is: creation is attempted with `exists_ok=False`
-    and the resulting conflict is swallowed. The existing table is *not* dropped,
-    so an interrupted long-running ETL can resume from its staging data.
+    A staging table left behind by a previous run that crashed before its cleanup step is
+    reused as-is: creation is attempted with `exists_ok=False` and the resulting conflict
+    is swallowed. The existing table is *not* dropped, which preserves any existing
+    staged rows (callers should truncate/delete staging tables if a clean slate is required).
     """
 
     def create_staging_table(table: bigquery.Table) -> bigquery.Table:
