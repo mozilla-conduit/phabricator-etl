@@ -731,9 +731,11 @@ def convert_json_to_string_list(value: Any, sessions: Sessions) -> list[str]:
 
     if isinstance(phid_map, dict):
         names = [
-            get_project_name(phid.encode("utf-8"), sessions)
-            if phid.startswith("PHID-PROJ-")
-            else get_user_name(phid.encode("utf-8"), sessions)
+            (
+                get_project_name(phid.encode("utf-8"), sessions)
+                if phid.startswith("PHID-PROJ-")
+                else get_user_name(phid.encode("utf-8"), sessions)
+            )
             for phid in phid_map.keys()
         ]
         return [name for name in names if name is not None]
