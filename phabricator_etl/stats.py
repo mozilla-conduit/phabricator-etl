@@ -607,9 +607,16 @@ def usernames_for_member_phids(member_phids: set[str], sessions: Sessions) -> li
     if not member_phids:
         return []
 
+    # `phid` is a binary column, so PHIDs parsed from JSON edge snapshots
+    # (str) must be encoded to bytes before binding, like the bytes PHIDs
+    # that other queries pull straight from the database.
     rows = (
         sessions.users.query(sessions.db.user.User.userName)
-        .filter(sessions.db.user.User.phid.in_(member_phids))
+        .filter(
+            sessions.db.user.User.phid.in_(
+                phid.encode("utf-8") for phid in member_phids
+            )
+        )
         .all()
     )
     return sorted({row[0] for row in rows})
@@ -728,9 +735,11 @@ def convert_json_to_string_list(value: Any, sessions: Sessions) -> list[str]:
 
     if isinstance(phid_map, dict):
         names = [
-            get_project_name(phid.encode("utf-8"), sessions)
-            if phid.startswith("PHID-PROJ-")
-            else get_user_name(phid.encode("utf-8"), sessions)
+            (
+                get_project_name(phid.encode("utf-8"), sessions)
+                if phid.startswith("PHID-PROJ-")
+                else get_user_name(phid.encode("utf-8"), sessions)
+            )
             for phid in phid_map.keys()
         ]
         return [name for name in names if name is not None]
