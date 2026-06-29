@@ -791,13 +791,22 @@ def load_bigquery_tables(
 def create_staging_tables(
     bq_client: bigquery.Client, tables: dict[str, bigquery.Table]
 ) -> dict[str, bigquery.Table]:
-    """Create per-target staging tables and return `{target_id: staging_table}`."""
-    return {
-        sql_table_id(table): bq_client.create_table(
-            bigquery.Table(staging_table_id(sql_table_id(table)), schema=table.schema),
+    """Create per-target staging tables and return `{target_id: staging_table}`.
+
+    Any staging table left behind by a previous run that crashed before its
+    cleanup step is dropped first, so a fresh table is always created.
+    """
+
+    def create_staging_table(table: bigquery.Table) -> bigquery.Table:
+        staging_id = staging_table_id(sql_table_id(table))
+        delete_staging_table(bq_client, staging_id, not_found_ok=True)
+        return bq_client.create_table(
+            bigquery.Table(staging_id, schema=table.schema),
             exists_ok=False,
         )
-        for table in tables.values()
+
+    return {
+        sql_table_id(table): create_staging_table(table) for table in tables.values()
     }
 
 
@@ -936,9 +945,16 @@ def truncate_staging_tables(
         truncate_staging_table(bq_client, sql_table_id(staging_tables[target_table_id]))
 
 
-def delete_staging_table(bq_client: bigquery.Client, table_id: str):
-    """Delete the BigQuery table with the given ID."""
-    bq_client.delete_table(table_id)
+def delete_staging_table(
+    bq_client: bigquery.Client, table_id: str, not_found_ok: bool = False
+):
+    """Delete a staging table, refusing to touch anything not named `*_staging`."""
+    if not table_id.endswith("_staging"):
+        raise ValueError(
+            f"Refusing to delete `{table_id}`: table ID must end with `_staging`."
+        )
+
+    bq_client.delete_table(table_id, not_found_ok=not_found_ok)
     logging.info(f"Deleted table {table_id}.")
 
 
