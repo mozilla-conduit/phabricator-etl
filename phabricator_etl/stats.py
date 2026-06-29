@@ -955,7 +955,7 @@ def delete_staging_table(
         )
 
     bq_client.delete_table(table_id, not_found_ok=not_found_ok)
-    logging.info(f"Deleted table {table_id}.")
+    logging.info(f"Deleted table {table_id} (if it existed).")
 
 
 def merge_staging_tables(
