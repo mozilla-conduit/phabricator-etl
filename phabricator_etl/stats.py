@@ -612,7 +612,7 @@ def usernames_for_member_phids(member_phids: set[str], sessions: Sessions) -> li
     # that other queries pull straight from the database.
     rows = (
         sessions.users.query(sessions.db.user.User.userName)
-        .filter(sessions.db.user.User.phid.in_(phid.encode() for phid in member_phids))
+        .filter(sessions.db.user.User.phid.in_(phid.encode("utf-8") for phid in member_phids))
         .all()
     )
     return sorted({row[0] for row in rows})
