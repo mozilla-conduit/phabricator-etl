@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from typing import Any, Optional
 
 import sqlalchemy
+from google.api_core.exceptions import Conflict
 from google.cloud import bigquery
 from more_itertools import chunked
 from sqlalchemy import desc, or_
@@ -793,17 +794,22 @@ def create_staging_tables(
 ) -> dict[str, bigquery.Table]:
     """Create per-target staging tables and return `{target_id: staging_table}`.
 
-    Any staging table left behind by a previous run that crashed before its
-    cleanup step is dropped first, so a fresh table is always created.
+    A staging table left behind by a previous run that crashed before its
+    cleanup step is reused as-is: creation is attempted with `exists_ok=False`
+    and the resulting conflict is swallowed. The existing table is *not* dropped,
+    so an interrupted long-running ETL can resume from its staging data.
     """
 
     def create_staging_table(table: bigquery.Table) -> bigquery.Table:
         staging_id = staging_table_id(sql_table_id(table))
-        delete_staging_table(bq_client, staging_id, not_found_ok=True)
-        return bq_client.create_table(
-            bigquery.Table(staging_id, schema=table.schema),
-            exists_ok=False,
-        )
+        try:
+            return bq_client.create_table(
+                bigquery.Table(staging_id, schema=table.schema),
+                exists_ok=False,
+            )
+        except Conflict:
+            logging.info(f"Staging table {staging_id} already exists, reusing it.")
+            return bq_client.get_table(staging_id)
 
     return {
         sql_table_id(table): create_staging_table(table) for table in tables.values()
@@ -945,17 +951,10 @@ def truncate_staging_tables(
         truncate_staging_table(bq_client, sql_table_id(staging_tables[target_table_id]))
 
 
-def delete_staging_table(
-    bq_client: bigquery.Client, table_id: str, not_found_ok: bool = False
-):
-    """Delete a staging table, refusing to touch anything not named `*_staging`."""
-    if not table_id.endswith("_staging"):
-        raise ValueError(
-            f"Refusing to delete `{table_id}`: table ID must end with `_staging`."
-        )
-
-    bq_client.delete_table(table_id, not_found_ok=not_found_ok)
-    logging.info(f"Deleted table {table_id} (if it existed).")
+def delete_staging_table(bq_client: bigquery.Client, table_id: str):
+    """Delete the BigQuery table with the given ID."""
+    bq_client.delete_table(table_id)
+    logging.info(f"Deleted table {table_id}.")
 
 
 def merge_staging_tables(
