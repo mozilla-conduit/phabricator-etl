@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from typing import Any, Optional
 
 import sqlalchemy
+from google.api_core.exceptions import Conflict
 from google.cloud import bigquery
 from more_itertools import chunked
 from sqlalchemy import desc, or_
@@ -800,13 +801,27 @@ def load_bigquery_tables(
 def create_staging_tables(
     bq_client: bigquery.Client, tables: dict[str, bigquery.Table]
 ) -> dict[str, bigquery.Table]:
-    """Create per-target staging tables and return `{target_id: staging_table}`."""
+    """Create per-target staging tables and return `{target_id: staging_table}`.
+
+    A staging table left behind by a previous run that crashed before its cleanup step is
+    reused as-is: creation is attempted with `exists_ok=False` and the resulting conflict
+    is swallowed. The existing table is *not* dropped, which preserves any existing
+    staged rows (callers should truncate/delete staging tables if a clean slate is required).
+    """
+
+    def create_staging_table(table: bigquery.Table) -> bigquery.Table:
+        staging_id = staging_table_id(sql_table_id(table))
+        try:
+            return bq_client.create_table(
+                bigquery.Table(staging_id, schema=table.schema),
+                exists_ok=False,
+            )
+        except Conflict:
+            logging.info(f"Staging table {staging_id} already exists, reusing it.")
+            return bq_client.get_table(staging_id)
+
     return {
-        sql_table_id(table): bq_client.create_table(
-            bigquery.Table(staging_table_id(sql_table_id(table)), schema=table.schema),
-            exists_ok=False,
-        )
-        for table in tables.values()
+        sql_table_id(table): create_staging_table(table) for table in tables.values()
     }
 
 
