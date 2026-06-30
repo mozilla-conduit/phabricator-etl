@@ -26,17 +26,17 @@ class PhabricatorEdgeConstant(IntEnum):
     PROJECT_HAS_MEMBER = 13
 
 
-def convert_value_to_string_list(value: Any) -> list[str]:
-    """Coerce a transaction value to a list of strings for a REPEATED field.
+def convert_value_to_string(value: Any) -> str:
+    """Coerce a transaction value to a string for a STRING field.
 
-    If the passed value is a boolean, then we convert it to `["1"]` or
-    `["0"]`. Otherwise we wrap its string form in a single-element list.
+    If the passed value is a boolean, then we convert it to `"1"` or
+    `"0"`. Otherwise we return its string form.
     """
     if isinstance(value, bool):
-        # `["1"]` for `True`, `["0"]` for `False`.
-        return [str(int(value))]
+        # `"1"` for `True`, `"0"` for `False`.
+        return str(int(value))
 
-    return [str(value)]
+    return str(value)
 
 
 def transform_changeset_dict(
@@ -101,8 +101,8 @@ def transform_transaction_dict(
         "author_email": author_email,
         "author_username": author_username,
         "date_created": transaction.dateCreated,
-        "old_value": convert_value_to_string_list(transaction.oldValue),
-        "new_value": convert_value_to_string_list(transaction.newValue),
+        "old_value": convert_value_to_string(transaction.oldValue),
+        "new_value": convert_value_to_string(transaction.newValue),
     }
 
 

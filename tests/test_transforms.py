@@ -15,7 +15,7 @@ from phabricator_etl.transforms import (
     is_membership_edge_transaction,
     parse_edge_member_phids,
     transform_project_transaction_dict,
-    convert_value_to_string_list,
+    convert_value_to_string,
     latest_approved_date,
     latest_landed_date,
     parse_repository_details,
@@ -134,41 +134,41 @@ def test_transform_project_transaction_dict_create_has_new_name_only():
     assert row["transaction_type"] == "core:create"
 
 
-def test_convert_value_to_string_list_true_becomes_one():
-    assert convert_value_to_string_list(True) == ["1"], (
-        '`convert_value_to_string_list(True)` should return `["1"]` so that '
-        "boolean transaction values round-trip into BigQuery's REPEATED column."
+def test_convert_value_to_string_true_becomes_one():
+    assert convert_value_to_string(True) == "1", (
+        '`convert_value_to_string(True)` should return `"1"` so that '
+        "boolean transaction values round-trip into BigQuery's STRING column."
     )
 
 
-def test_convert_value_to_string_list_false_becomes_zero():
-    assert convert_value_to_string_list(False) == ["0"], (
-        '`convert_value_to_string_list(False)` should return `["0"]` '
+def test_convert_value_to_string_false_becomes_zero():
+    assert convert_value_to_string(False) == "0", (
+        '`convert_value_to_string(False)` should return `"0"` '
         "(the string, not the integer)."
     )
 
 
-def test_convert_value_to_string_list_str_passes_through():
-    assert convert_value_to_string_list("already a string") == ["already a string"], (
-        "A string input should be wrapped in a single-element list unchanged."
+def test_convert_value_to_string_str_passes_through():
+    assert convert_value_to_string("already a string") == "already a string", (
+        "A string input should pass through unchanged."
     )
 
 
-def test_convert_value_to_string_list_int_stringifies():
-    assert convert_value_to_string_list(42) == ["42"], (
+def test_convert_value_to_string_int_stringifies():
+    assert convert_value_to_string(42) == "42", (
         "Integer inputs should be coerced to their decimal string form."
     )
 
 
-def test_convert_value_to_string_list_none_stringifies():
-    assert convert_value_to_string_list(None) == ["None"], (
+def test_convert_value_to_string_none_stringifies():
+    assert convert_value_to_string(None) == "None", (
         "`None` should be coerced via `str(None)` rather than special-cased; "
         "the ETL relies on a non-null value for `oldValue`/`newValue`."
     )
 
 
-def test_convert_value_to_string_list_empty_string_passes_through():
-    assert convert_value_to_string_list("") == [""], (
+def test_convert_value_to_string_empty_string_passes_through():
+    assert convert_value_to_string("") == "", (
         "Empty strings should remain empty rather than being coerced to another value."
     )
 
@@ -357,11 +357,11 @@ def test_transform_transaction_dict_maps_fields_and_stringifies_values():
         "author_email": "bob@example.com",
         "author_username": "bob",
         "date_created": 1_700_000_000,
-        "old_value": ["0"],
-        "new_value": ["2"],
+        "old_value": "0",
+        "new_value": "2",
     }, (
         "`transform_transaction_dict` should map every column straight "
-        "through, using `convert_value_to_string_list` on the old/new values."
+        "through, using `convert_value_to_string` on the old/new values."
     )
 
 
@@ -381,9 +381,9 @@ def test_transform_transaction_dict_coerces_boolean_values():
         author_username=None,
     )
 
-    assert (result["old_value"], result["new_value"]) == (["0"], ["1"]), (
+    assert (result["old_value"], result["new_value"]) == ("0", "1"), (
         "Boolean `oldValue`/`newValue` should round-trip through "
-        '`convert_value_to_string_list`, becoming `["0"]`/`["1"]`.'
+        '`convert_value_to_string`, becoming `"0"`/`"1"`.'
     )
 
 
